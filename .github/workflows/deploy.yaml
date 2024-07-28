@@ -22,7 +22,7 @@ jobs:
           username: hk
           privateKey: ${{ secrets.PRIVATE_KEY}}
 
-      - name: do something
+      - name: deploy
         uses: garygrossgarten/github-action-ssh@release
         with:
           command: |
