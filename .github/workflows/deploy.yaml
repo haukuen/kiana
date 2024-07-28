@@ -22,10 +22,12 @@ jobs:
           username: hk
           privateKey: ${{ secrets.PRIVATE_KEY}}
 
-      - name: git pull
+      - name: do something
         uses: garygrossgarten/github-action-ssh@release
         with:
-          command: git pull
+          command: |
+          cd moebot
+          git pull
           host: ${{ secrets.HOST }}
           username: hk
           privateKey: ${{ secrets.PRIVATE_KEY}}
