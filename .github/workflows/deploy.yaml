@@ -1,12 +1,13 @@
 name: Deploy to Production
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - online
 
 jobs:
   deploy:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
@@ -23,8 +24,8 @@ jobs:
           SERVER_IP: ${{ secrets.SERVER_IP }}
           SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no $SSH_USERNAME@$SERVER_IP '
+          ssh -o StrictHostKeyChecking=no $SSH_USERNAME@$SERVER_IP << 'EOF'
             cd moebot
             git pull
             # Add any additional commands you need to run on the server after git pull
-          '
+          EOF
