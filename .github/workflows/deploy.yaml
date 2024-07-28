@@ -26,8 +26,8 @@ jobs:
         uses: garygrossgarten/github-action-ssh@release
         with:
           command: |
-          cd moebot
-          git pull
+            cd moebot
+            gg git pull
           host: ${{ secrets.HOST }}
           username: hk
           privateKey: ${{ secrets.PRIVATE_KEY}}
