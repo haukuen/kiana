@@ -10,10 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clone repository
-        run: |
-          git clone http://106.14.132.49:3000/haukuen/moebot.git
-          cd moebot
+      - name: Check out repository
+        uses: actions/checkout@v2
 
       - name: Setup SSH key
         uses: webfactory/ssh-agent@v0.5.3
@@ -27,6 +25,6 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no $SSH_USERNAME@$SERVER_IP '
             cd moebot
-            git pull origin online
+            git pull
             # Add any additional commands you need to run on the server after git pull
           '
