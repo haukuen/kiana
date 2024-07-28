@@ -14,18 +14,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v2
 
-      - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.5.3
+      - name: cd moebot
+        uses: garygrossgarten/github-action-ssh@release
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command: cd moebot
+          host: ${{ secrets.HOST }}
+          username: hk
+          privateKey: ${{ secrets.PRIVATE_KEY}}
 
-      - name: SSH to server and execute commands
-        env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
-          SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
-        run: |
-          ssh -o StrictHostKeyChecking=no $SSH_USERNAME@$SERVER_IP << 'EOF'
-            cd moebot
-            git pull
-            # Add any additional commands you need to run on the server after git pull
-          EOF
+      - name: git pull
+        uses: garygrossgarten/github-action-ssh@release
+        with:
+          command: git pull
+          host: ${{ secrets.HOST }}
+          username: hk
+          privateKey: ${{ secrets.PRIVATE_KEY}}
