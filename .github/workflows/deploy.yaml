@@ -1,0 +1,32 @@
+name: Deploy to Production
+
+on:
+  pull_request:
+    branches:
+      - online
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        run: |
+          git clone http://106.14.132.49:3000/haukuen/moebot.git
+          cd moebot
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: SSH to server and execute commands
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $SSH_USERNAME@$SERVER_IP '
+            cd moebot
+            git pull origin online
+            # Add any additional commands you need to run on the server after git pull
+          '
