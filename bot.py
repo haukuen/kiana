@@ -25,7 +25,7 @@ nonebot.init()
 driver = nonebot.get_driver()
 driver.register_adapter(QQAdapter)
 
-nonebot.load_builtin_plugins('echo')
+# nonebot.load_builtin_plugins('echo')
 
 
 nonebot.load_from_toml("pyproject.toml")
