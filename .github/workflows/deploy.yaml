@@ -13,15 +13,7 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v2
-
-      - name: cd moebot
-        uses: garygrossgarten/github-action-ssh@release
-        with:
-          command: cd moebot
-          host: ${{ secrets.HOST }}
-          username: hk
-          privateKey: ${{ secrets.PRIVATE_KEY}}
-
+        
       - name: deploy
         uses: garygrossgarten/github-action-ssh@release
         with:
