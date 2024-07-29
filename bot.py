@@ -16,7 +16,7 @@ logger.add(
     filter=default_filter
 )
 
-logger.add("log/info.log", level="INFO", format=default_format, rotation="1 day")
+logger.add("log/info.log", level="INFO", format=default_format, rotation="00:00")
 logger.add("log/debug.log", level="DEBUG", format=default_format, rotation="1 week")
 logger.add("log/error.log", level="ERROR", format=default_format, rotation="1 week")
 
