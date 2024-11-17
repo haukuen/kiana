@@ -123,8 +123,8 @@ async def _():
 
 @scheduler.scheduled_job(
     "cron",
-    hour=0,
-    minute=1,
+    hour=9,
+    minute=25,
 )
 async def _():
     for _ in range(3):
