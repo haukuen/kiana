@@ -121,6 +121,28 @@ async def _():
         logger.error("虫虫日报生成超时")
 
 
+async def send_daily_report(time_period: str = "每日"):
+    """
+    发送日报的通用函数
+    :param time_period: 时间段标识，用于日志显示
+    """
+    if not config.auto_send:
+        return
+    file = await Report.get_report_image()
+    for _, bot in get_bots().items():
+        if interface := get_interface(bot):
+            scenes = [
+                s
+                for s in await interface.get_scenes()
+                if s.is_group and not group_manager.check(s.id)
+            ]
+            for scene in scenes:
+                await UniMessage(Image(raw=file)).send(bot=bot, target=Target(scene.id))
+                rand = random.randint(1, 5)
+                await asyncio.sleep(rand)
+    logger.info(f"{time_period}虫虫日报发送完成...")
+
+
 @scheduler.scheduled_job(
     "cron",
     hour=9,
@@ -142,18 +164,13 @@ async def _():
     minute=30,
 )
 async def _():
-    if not config.auto_send:
-        return
-    file = await Report.get_report_image()
-    for _, bot in get_bots().items():
-        if interface := get_interface(bot):
-            scenes = [
-                s
-                for s in await interface.get_scenes()
-                if s.is_group and not group_manager.check(s.id)
-            ]
-            for scene in scenes:
-                await UniMessage(Image(raw=file)).send(bot=bot, target=Target(scene.id))
-                rand = random.randint(1, 5)
-                await asyncio.sleep(rand)
-    logger.info("每日虫虫日报发送完成...")
+    await send_daily_report("早间")
+
+
+@scheduler.scheduled_job(
+    "cron",
+    hour=18,
+    minute=0,
+)
+async def _():
+    await send_daily_report("晚间")
