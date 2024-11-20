@@ -167,10 +167,10 @@ async def _():
     await send_daily_report("早间")
 
 
-@scheduler.scheduled_job(
+'''@scheduler.scheduled_job(
     "cron",
     hour=18,
     minute=0,
 )
 async def _():
-    await send_daily_report("晚间")
+    await send_daily_report("晚间")'''
