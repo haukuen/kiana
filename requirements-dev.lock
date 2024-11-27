@@ -12,12 +12,13 @@
 -e file:.
 aiofiles==24.1.0
     # via nonebot-plugin-htmlrender
-aiosqlite==0.20.0
+aiosqlite==0.17.0
     # via sqlalchemy
 alembic==1.14.0
     # via nonebot-plugin-orm
 anyio==4.6.2.post1
     # via httpx
+    # via nonebot-plugin-send-anything-anywhere
     # via nonebot2
     # via starlette
     # via watchfiles
@@ -58,6 +59,7 @@ fastapi==0.115.5
     # via nonebot2
 filetype==1.2.0
     # via meme-generator
+    # via nonebot-plugin-send-anything-anywhere
 fonttools==4.55.0
     # via matplotlib
     # via pil-utils
@@ -79,6 +81,7 @@ httpx==0.27.2
     # via kiana
     # via meme-generator
     # via nonebot-plugin-memes
+    # via nonebot-plugin-mystool
     # via nonebot-plugin-userinfo
     # via nonebot2
 hyperframe==6.0.1
@@ -132,12 +135,16 @@ nepattern==0.7.6
     # via nonebot-plugin-alconna
 nonebot-adapter-onebot==2.4.6
     # via kiana
+    # via nonebot-plugin-mystool
+nonebot-adapter-qq==1.5.3
+    # via nonebot-plugin-mystool
 nonebot-plugin-alconna==0.53.1
     # via kiana
     # via nonebot-plugin-memes
     # via nonebot-plugin-withdraw
-nonebot-plugin-apscheduler==0.5.0
+nonebot-plugin-apscheduler==0.2.0
     # via kiana
+    # via nonebot-plugin-mystool
 nonebot-plugin-htmlrender==0.4.0
     # via kiana
 nonebot-plugin-localstore==0.7.1
@@ -146,10 +153,14 @@ nonebot-plugin-localstore==0.7.1
     # via nonebot-plugin-orm
 nonebot-plugin-memes==0.7.11
     # via kiana
+nonebot-plugin-mystool==2.9.0
+    # via kiana
 nonebot-plugin-orm==0.7.6
     # via kiana
     # via nonebot-plugin-memes
     # via nonebot-plugin-session-orm
+nonebot-plugin-send-anything-anywhere==0.7.1
+    # via nonebot-plugin-mystool
 nonebot-plugin-session==0.3.2
     # via nonebot-plugin-memes
     # via nonebot-plugin-session-orm
@@ -167,18 +178,23 @@ nonebot-plugin-withdraw==0.4.0
 nonebot2==2.4.0
     # via kiana
     # via nonebot-adapter-onebot
+    # via nonebot-adapter-qq
     # via nonebot-plugin-alconna
     # via nonebot-plugin-apscheduler
     # via nonebot-plugin-htmlrender
     # via nonebot-plugin-localstore
     # via nonebot-plugin-memes
+    # via nonebot-plugin-mystool
     # via nonebot-plugin-orm
+    # via nonebot-plugin-send-anything-anywhere
     # via nonebot-plugin-session
     # via nonebot-plugin-session-orm
     # via nonebot-plugin-uninfo
     # via nonebot-plugin-userinfo
     # via nonebot-plugin-waiter
     # via nonebot-plugin-withdraw
+ntplib==0.4.0
+    # via nonebot-plugin-mystool
 numpy==1.26.4
     # via contourpy
     # via imageio
@@ -197,6 +213,7 @@ pillow==10.4.0
     # via imageio
     # via kiana
     # via matplotlib
+    # via nonebot-plugin-mystool
     # via pil-utils
 playwright==1.48.0
     # via nonebot-plugin-htmlrender
@@ -205,8 +222,10 @@ propcache==0.2.0
 pydantic==1.10.19
     # via fastapi
     # via nonebot-adapter-onebot
-    # via nonebot-plugin-apscheduler
+    # via nonebot-adapter-qq
     # via nonebot-plugin-localstore
+    # via nonebot-plugin-mystool
+    # via nonebot-plugin-send-anything-anywhere
     # via nonebot2
 pydantic-core==2.27.0
     # via kiana
@@ -237,18 +256,21 @@ python-multipart==0.0.17
 pytz==2024.2
     # via apscheduler
     # via dateparser
+    # via nonebot-plugin-mystool
 pyyaml==6.0.2
     # via nonebot-plugin-memes
     # via pymdown-extensions
     # via uvicorn
 qrcode==8.0
     # via meme-generator
+    # via nonebot-plugin-mystool
 rapidfuzz==3.10.1
     # via nonebot-plugin-memes
 regex==2024.11.6
     # via dateparser
 requests==2.32.3
     # via kiana
+    # via nonebot-plugin-mystool
 rich==13.9.4
     # via meme-generator
 six==1.16.0
@@ -263,6 +285,7 @@ sqlalchemy==2.0.36
 starlette==0.41.2
     # via fastapi
 strenum==0.4.15
+    # via nonebot-plugin-send-anything-anywhere
     # via nonebot-plugin-session
     # via nonebot-plugin-userinfo
 tarina==0.6.4
@@ -271,6 +294,7 @@ tarina==0.6.4
     # via nonebot-plugin-alconna
 tenacity==9.0.0
     # via kiana
+    # via nonebot-plugin-mystool
 toml==0.10.2
     # via meme-generator
 typing-extensions==4.12.2
@@ -281,6 +305,7 @@ typing-extensions==4.12.2
     # via meme-generator
     # via nepattern
     # via nonebot-adapter-onebot
+    # via nonebot-adapter-qq
     # via nonebot-plugin-localstore
     # via nonebot2
     # via pydantic
@@ -304,6 +329,7 @@ websockets==14.1
     # via nonebot2
     # via uvicorn
 yarl==1.17.1
+    # via nonebot-adapter-qq
     # via nonebot2
 zhdate==0.1
     # via kiana
