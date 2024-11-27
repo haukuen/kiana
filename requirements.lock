@@ -14,8 +14,11 @@ aiofiles==24.1.0
     # via nonebot-plugin-htmlrender
 aiosqlite==0.17.0
     # via sqlalchemy
+    # via tortoise-orm
 alembic==1.14.0
     # via nonebot-plugin-orm
+amis-python==1.0.8.post2
+    # via nonebot-plugin-learning-chat
 anyio==4.6.2.post1
     # via httpx
     # via nonebot-plugin-send-anything-anywhere
@@ -31,6 +34,13 @@ arclet-alconna==1.8.32
 arclet-alconna-tools==0.7.10
     # via meme-generator
     # via nonebot-plugin-alconna
+asyncmy==0.2.9
+    # via tortoise-orm
+asyncodbc==0.1.1
+    # via tortoise-orm
+asyncpg==0.30.0
+    # via nonebot-plugin-tortoise-orm
+    # via tortoise-orm
 bbcode==1.1.0
     # via pil-utils
 cachetools==5.5.0
@@ -50,6 +60,8 @@ cycler==0.12.1
     # via matplotlib
 dateparser==1.2.0
     # via meme-generator
+ecdsa==0.19.0
+    # via python-jose
 emoji==2.14.0
     # via nonebot-plugin-userinfo
 exceptiongroup==1.2.2
@@ -98,7 +110,12 @@ importlib-metadata==8.5.0
     # via nonebot-plugin-uninfo
 importlib-resources==6.4.5
     # via nonebot-plugin-orm
+iso8601==1.1.0
+    # via tortoise-orm
+jieba==0.42.1
+    # via nonebot-plugin-learning-chat
 jinja2==3.1.4
+    # via amis-python
     # via nonebot-plugin-htmlrender
 kiwisolver==1.4.7
     # via matplotlib
@@ -135,6 +152,7 @@ nepattern==0.7.6
     # via nonebot-plugin-alconna
 nonebot-adapter-onebot==2.4.6
     # via kiana
+    # via nonebot-plugin-learning-chat
     # via nonebot-plugin-mystool
 nonebot-adapter-qq==1.5.3
     # via nonebot-plugin-mystool
@@ -144,13 +162,17 @@ nonebot-plugin-alconna==0.53.1
     # via nonebot-plugin-withdraw
 nonebot-plugin-apscheduler==0.2.0
     # via kiana
+    # via nonebot-plugin-learning-chat
     # via nonebot-plugin-mystool
 nonebot-plugin-htmlrender==0.4.0
+    # via kiana
+nonebot-plugin-learning-chat==0.4.0
     # via kiana
 nonebot-plugin-localstore==0.7.1
     # via kiana
     # via nonebot-plugin-memes
     # via nonebot-plugin-orm
+    # via nonebot-plugin-tortoise-orm
 nonebot-plugin-memes==0.7.11
     # via kiana
 nonebot-plugin-mystool==2.9.0
@@ -167,6 +189,8 @@ nonebot-plugin-session==0.3.2
     # via nonebot-plugin-withdraw
 nonebot-plugin-session-orm==0.2.0
     # via nonebot-plugin-memes
+nonebot-plugin-tortoise-orm==0.1.4
+    # via nonebot-plugin-learning-chat
 nonebot-plugin-uninfo==0.5.0
     # via kiana
 nonebot-plugin-userinfo==0.2.6
@@ -182,6 +206,7 @@ nonebot2==2.4.0
     # via nonebot-plugin-alconna
     # via nonebot-plugin-apscheduler
     # via nonebot-plugin-htmlrender
+    # via nonebot-plugin-learning-chat
     # via nonebot-plugin-localstore
     # via nonebot-plugin-memes
     # via nonebot-plugin-mystool
@@ -189,6 +214,7 @@ nonebot2==2.4.0
     # via nonebot-plugin-send-anything-anywhere
     # via nonebot-plugin-session
     # via nonebot-plugin-session-orm
+    # via nonebot-plugin-tortoise-orm
     # via nonebot-plugin-uninfo
     # via nonebot-plugin-userinfo
     # via nonebot-plugin-waiter
@@ -219,7 +245,11 @@ playwright==1.48.0
     # via nonebot-plugin-htmlrender
 propcache==0.2.0
     # via yarl
+pyasn1==0.6.1
+    # via python-jose
+    # via rsa
 pydantic==1.10.19
+    # via amis-python
     # via fastapi
     # via nonebot-adapter-onebot
     # via nonebot-adapter-qq
@@ -238,8 +268,13 @@ pygtrie==2.5.0
     # via nonebot2
 pymdown-extensions==10.12
     # via nonebot-plugin-htmlrender
+pyodbc==5.2.0
+    # via asyncodbc
+    # via nonebot-plugin-tortoise-orm
 pyparsing==3.2.0
     # via matplotlib
+pypika-tortoise==0.1.6
+    # via tortoise-orm
 pypinyin==0.53.0
     # via nonebot-plugin-memes
 python-dateutil==2.9.0.post0
@@ -249,6 +284,8 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
     # via nonebot2
     # via uvicorn
+python-jose==3.3.0
+    # via nonebot-plugin-learning-chat
 python-markdown-math==0.8
     # via nonebot-plugin-htmlrender
 python-multipart==0.0.17
@@ -257,8 +294,10 @@ pytz==2024.2
     # via apscheduler
     # via dateparser
     # via nonebot-plugin-mystool
+    # via tortoise-orm
 pyyaml==6.0.2
     # via nonebot-plugin-memes
+    # via nonebot-plugin-tortoise-orm
     # via pymdown-extensions
     # via uvicorn
 qrcode==8.0
@@ -273,8 +312,15 @@ requests==2.32.3
     # via nonebot-plugin-mystool
 rich==13.9.4
     # via meme-generator
+rsa==4.9
+    # via python-jose
+ruamel-yaml==0.17.40
+    # via nonebot-plugin-learning-chat
+ruamel-yaml-clib==0.2.12
+    # via ruamel-yaml
 six==1.16.0
     # via apscheduler
+    # via ecdsa
     # via python-dateutil
 sniffio==1.3.1
     # via anyio
@@ -297,6 +343,9 @@ tenacity==9.0.0
     # via nonebot-plugin-mystool
 toml==0.10.2
     # via meme-generator
+tortoise-orm==0.20.0
+    # via nonebot-plugin-learning-chat
+    # via nonebot-plugin-tortoise-orm
 typing-extensions==4.12.2
     # via aiosqlite
     # via alembic

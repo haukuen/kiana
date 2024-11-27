@@ -27,12 +27,13 @@ dependencies = [
     "nonebot-plugin-orm[default]>=0.7.6",
     "nonebot-plugin-memes>=0.7.11",
     "nonebot-plugin-mystool>=2.9.0",
+    "nonebot-plugin-learning-chat>=0.4.0",
 ]
 
 [tool.nonebot]
 adapters = [
     { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
 ]
-plugins = ["nonebot_plugin_memes", "nonebot_plugin_withdraw", "nonebot_plugin_mystool"]
+plugins = ["nonebot_plugin_memes", "nonebot_plugin_withdraw", "nonebot_plugin_mystool", "nonebot_plugin_learning_chat"]
 plugin_dirs = ["src/plugins"]
 builtin_plugins = []
