@@ -1,12 +1,13 @@
 from nonebot import get_plugin_config, on_command
 from nonebot.plugin import PluginMetadata
 from nonebot.typing import T_State
-from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment, MessageEvent, GroupMessageEvent
 from nonebot.params import CommandArg
 from httpx import AsyncClient, HTTPStatusError, RequestError
 from nonebot import logger
 import langid
 import json
+from nonebot.rule import Rule, to_me
 
 from .config import Config
 
@@ -19,7 +20,18 @@ __plugin_meta__ = PluginMetadata(
 
 config = get_plugin_config(Config)
 
-anime_trace = on_command("搜番", priority=10, block=True)
+def has_image() -> Rule:
+    async def _has_image(event: MessageEvent) -> bool:
+        if event.reply:
+            # 检查回复的消息中是否包含图片
+            for seg in event.reply.message:
+                if seg.type == "image":
+                    return True
+        return False
+    return Rule(_has_image)
+
+anime_trace = on_command("搜番", aliases={"以图搜番"}, priority=10, block=True)
+anime_trace_reply = on_command("搜番", aliases={"以图搜番"}, rule=has_image(), priority=9, block=True)
 
 @anime_trace.handle()
 async def _(state: T_State, msg: Message = CommandArg()):
@@ -44,6 +56,25 @@ async def _(bot: Bot, event: Event, state: T_State):
     
     try:
         result = await process_image(image_url)
+        await bot.send(event, result["message"])
+
+        if 'video_url' in result and result['video_url']:
+            logger.info(f'尝试发送视频: {result["video_url"]}')
+            await bot.send(event, MessageSegment.video(result["video_url"]))
+    except Exception as e:
+        logger.error(f"处理图片时发生错误: {e}", exc_info=True)
+        await bot.send(event, f"处理图片时发生错误: {str(e)}")
+
+@anime_trace_reply.handle()
+async def handle_reply(bot: Bot, event: MessageEvent, state: T_State):
+    # 从回复消息中获取图片
+    for seg in event.reply.message:
+        if seg.type == "image":
+            state["image"] = seg.data["url"]
+            break
+    
+    try:
+        result = await process_image(state["image"])
         await bot.send(event, result["message"])
 
         if 'video_url' in result and result['video_url']:
