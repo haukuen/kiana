@@ -31,47 +31,24 @@ def has_image() -> Rule:
     return Rule(_has_image)
 
 anime_trace = on_command("搜番", aliases={"以图搜番"}, priority=10, block=True)
-anime_trace_reply = on_command("搜番", aliases={"以图搜番"}, rule=has_image(), priority=9, block=True)
 
 @anime_trace.handle()
-async def _(state: T_State, msg: Message = CommandArg()):
-    # 检查消息中是否有图片
-    if image := msg["image"]:
-        state["image"] = image[0].data["url"]
-    else:
-        state["image"] = None
-
-    # 检查消息中是否有命令
-    if text := msg.extract_plain_text():
-        state["text"] = text
-    else:
-        state["text"] = None
-
-@anime_trace.got("image", prompt="请跟随消息发送图片")
-async def _(bot: Bot, event: Event, state: T_State):
-    if not state["image"]:
-        await anime_trace.finish('请跟随消息发送图片')
-
-    image_url = state["image"]
+async def handle_anime_trace(bot: Bot, event: MessageEvent, state: T_State, msg: Message = CommandArg()):
+    # 首先检查是否是回复消息
+    if event.reply:
+        for seg in event.reply.message:
+            if seg.type == "image":
+                state["image"] = seg.data["url"]
+                break
     
-    try:
-        result = await process_image(image_url)
-        await bot.send(event, result["message"])
-
-        if 'video_url' in result and result['video_url']:
-            logger.info(f'尝试发送视频: {result["video_url"]}')
-            await bot.send(event, MessageSegment.video(result["video_url"]))
-    except Exception as e:
-        logger.error(f"处理图片时发生错误: {e}", exc_info=True)
-        await bot.send(event, f"处理图片时发生错误: {str(e)}")
-
-@anime_trace_reply.handle()
-async def handle_reply(bot: Bot, event: MessageEvent, state: T_State):
-    # 从回复消息中获取图片
-    for seg in event.reply.message:
-        if seg.type == "image":
-            state["image"] = seg.data["url"]
-            break
+    # 如果不是回复消息，检查命令中是否包含图片
+    if "image" not in state and msg["image"]:
+        state["image"] = msg["image"][0].data["url"]
+    
+    # 如果没有找到图片，提示用户
+    if "image" not in state:
+        await anime_trace.finish("请发送图片或回复包含图片的消息")
+        return
     
     try:
         result = await process_image(state["image"])
