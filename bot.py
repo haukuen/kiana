@@ -16,15 +16,33 @@ logger.add(
     filter=default_filter
 )
 
-logger.add("log/info.log", level="INFO", format=default_format, rotation="00:00")
-logger.add("log/debug.log", level="DEBUG", format=default_format, rotation="1 week")
-logger.add("log/error.log", level="ERROR", format=default_format, rotation="1 week")
+# 修改日志轮转配置
+logger.add(
+    "log/info.log", 
+    level="INFO", 
+    format=default_format, 
+    rotation="00:00",
+    retention="30 days"
+)
+logger.add(
+    "log/debug.log", 
+    level="DEBUG", 
+    format=default_format, 
+    rotation="00:00",
+    retention="7 days" 
+)
+logger.add(
+    "log/error.log", 
+    level="ERROR", 
+    format=default_format, 
+    rotation="00:00",
+    retention="30 days"
+)
 
 nonebot.init()
 
 driver = nonebot.get_driver()
 driver.register_adapter(ONEBOT_V11Adapter)
-
 
 nonebot.load_from_toml("pyproject.toml")
 
