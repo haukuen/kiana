@@ -14,10 +14,9 @@ from zhdate import ZhDate
 
 from .config import (
     DATA_PATH,
-    REPORT_PATH,
     TEMPLATE_PATH,
     Hitokoto,
-    SixData,
+    SixData, 
     config,
     favs_arr,
     favs_list,
@@ -97,13 +96,6 @@ class AsyncHttpx:
                 raise
 
 
-@run_sync
-def save(data: bytes):
-    file_path = REPORT_PATH / f"{datetime.now().date()}.png"
-    with open(file_path, "wb") as file:
-        file.write(data)
-
-
 class Report:
     hitokoto_url = "https://v1.hitokoto.cn/?c=a"
     alapi_url = "https://v2.alapi.cn/api/zaobao"
@@ -112,9 +104,9 @@ class Report:
     bili_url = "https://s.search.bilibili.com/main/hotword"
     it_url = "https://www.ithome.com/rss/"
 
-    week = {  # noqa: RUF012
+    week = {
         0: "一",
-        1: "二",
+        1: "二", 
         2: "三",
         3: "四",
         4: "五",
@@ -126,10 +118,6 @@ class Report:
     async def get_report_image(cls) -> bytes:
         """获取数据"""
         now = datetime.now()
-        file = REPORT_PATH / f"{now.date()}.png"
-        if file.exists():
-            with file.open("rb") as image_file:
-                return image_file.read()
         zhdata = ZhDate.from_datetime(now)
         result = await asyncio.gather(
             *[
@@ -159,7 +147,6 @@ class Report:
             },
             wait=2,
         )
-        await save(image_bytes)
         return image_bytes
 
     @classmethod

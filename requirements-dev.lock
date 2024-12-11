@@ -140,7 +140,7 @@ matplotlib==3.9.2
     # via pil-utils
 mdurl==0.1.2
     # via markdown-it-py
-meme-generator==0.1.6
+meme-generator==0.1.5
     # via nonebot-plugin-memes
 msgpack==1.1.0
     # via nonebot-adapter-onebot
@@ -243,8 +243,6 @@ pillow==10.4.0
     # via pil-utils
 playwright==1.48.0
     # via nonebot-plugin-htmlrender
-propcache==0.2.0
-    # via yarl
 pyasn1==0.6.1
     # via python-jose
     # via rsa
@@ -277,6 +275,8 @@ pypika-tortoise==0.1.6
     # via tortoise-orm
 pypinyin==0.53.0
     # via nonebot-plugin-memes
+pypng==0.20220715.0
+    # via qrcode
 python-dateutil==2.9.0.post0
     # via dateparser
     # via matplotlib
@@ -300,8 +300,7 @@ pyyaml==6.0.2
     # via nonebot-plugin-tortoise-orm
     # via pymdown-extensions
     # via uvicorn
-qrcode==8.0
-    # via meme-generator
+qrcode==7.4.2
     # via nonebot-plugin-mystool
 rapidfuzz==3.10.1
     # via nonebot-plugin-memes
@@ -360,6 +359,7 @@ typing-extensions==4.12.2
     # via pydantic
     # via pydantic-core
     # via pyee
+    # via qrcode
     # via sqlalchemy
     # via tarina
 tzlocal==5.2
@@ -377,7 +377,7 @@ watchfiles==0.24.0
 websockets==14.1
     # via nonebot2
     # via uvicorn
-yarl==1.17.1
+yarl==1.11.1
     # via nonebot-adapter-qq
     # via nonebot2
 zhdate==0.1
