@@ -119,14 +119,6 @@ def parse_api_result(result):
     first_result = result['result'][0]
     first_anilist = first_result['anilist']
 
-    # Check for adult content
-    if first_anilist.get('isAdult', False):
-        return dict(
-            message="抱歉，该内容不适合展示",
-            video_url=None,
-            image_url=None
-        )
-
     name = detect_simplified_chinese(first_anilist.get('synonyms', []))
     if not name:
         name = first_anilist['title'].get('native', '未知番名')
@@ -139,6 +131,14 @@ def parse_api_result(result):
     message += f"番名：{name}\n"
     message += f"第 {first_result.get('episode', '未知')} 集 {time_string}\n"
     message += f"置信度：{first_result['similarity']*100:.2f}%\n"
+
+    if first_anilist.get('isAdult', False):
+        message += "（注意：该内容可能不适合所有年龄段）"
+        return dict(
+            message=message,
+            video_url=None,
+            image_url=None
+        )
 
     video_url = first_result.get('video', '')
     image_url = first_result.get('image', '')
