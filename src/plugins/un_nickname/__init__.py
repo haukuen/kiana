@@ -59,6 +59,9 @@ async def handle_add_nickname(event: GroupMessageEvent):
     if not nickname:
         await add_nickname_matcher.finish("昵称不能为空！")
         return
+    if len(nickname) > 15:
+        await add_nickname_matcher.finish("昵称过长（最多15字符）")
+        return
     
     # 读取并更新数据
     with open(plugin_config_file, 'r', encoding='utf-8') as f:
