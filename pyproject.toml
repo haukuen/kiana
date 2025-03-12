@@ -37,3 +37,8 @@ adapters = [
 plugins = ["nonebot_plugin_memes", "nonebot_plugin_withdraw", "nonebot_plugin_mystool", "nonebot_plugin_learning_chat"]
 plugin_dirs = ["src/plugins"]
 builtin_plugins = []
+
+[tool.rye]
+dev-dependencies = [
+    "ruff>=0.9.6",
+]
