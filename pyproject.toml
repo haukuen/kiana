@@ -26,7 +26,6 @@ dependencies = [
     "nonebot-plugin-withdraw>=0.4.0",
     "nonebot-plugin-orm[default]>=0.7.6",
     "nonebot-plugin-memes>=0.7.11",
-    "nonebot-plugin-mystool>=2.9.0",
     "nonebot-plugin-learning-chat>=0.4.0",
 ]
 
