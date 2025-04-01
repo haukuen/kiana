@@ -1,6 +1,4 @@
 from pydantic import BaseModel
 
-
 class Config(BaseModel):
-    """Plugin Config Here"""
-    pass
+    max_nickname_length: int = 15  # 最大昵称长度限制
