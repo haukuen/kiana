@@ -2,20 +2,20 @@
 
 ### 前置要求
 
-在开始之前，请确保已安装 [Rye](https://rye.astral.sh/)。
+在开始之前，请确保已安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。
 
 ### 安装步骤
 
 1. 安装 nb-cli
 ```bash
-rye install nb-cli
+uv tool install nb-cli
 ```
 
 2. 克隆项目并安装依赖
 ```bash
 git clone https://github.com/HauKuen/kiana.git
 cd kiana
-rye sync
+uv sync
 ```
 
 3. 配置和运行
