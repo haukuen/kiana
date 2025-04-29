@@ -28,9 +28,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract tag name
-        id: tag
-        run: echo "TAG=${GITHUB_REF##*/}" >> $GITHUB_ENV
+      - name: Extract and normalize tag and repository name
+        id: meta
+        run: |
+          echo "TAG=${GITHUB_REF##*/}" >> $GITHUB_ENV
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "REPO=${REPO_LC}" >> $GITHUB_ENV
 
       - name: Build and push Docker image (multi-platform)
         uses: docker/build-push-action@v5
@@ -39,7 +42,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository }}:${{ env.TAG }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ env.REPO }}:${{ env.TAG }}
+            ghcr.io/${{ env.REPO }}:latest
           labels: |
-            org.opencontainers.image.source=${{ github.repositoryUrl }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
