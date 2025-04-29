@@ -12,8 +12,8 @@ COPY . /app/
 
 RUN uv sync --no-dev
 
-RUN nb orm upgrade
+COPY start.sh /start.sh
 
-RUN uv run playwright install chromium --with-deps
+RUN chmod +x /start.sh
 
-CMD ["nb", "run"]
+CMD ["/start.sh"]
