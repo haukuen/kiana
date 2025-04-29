@@ -4,7 +4,7 @@
 
 在开始之前，请确保已安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。
 
-### 安装步骤
+### 源码部署
 
 1. 安装 nb-cli
 ```bash
@@ -24,6 +24,28 @@ uv sync
 # 2. 运行项目
 nb run --reload
 ```
+
+### Docker 部署
+创建 `.env.prod` 文件并根据需要修改配置。
+
+```yaml
+services:
+  kiana:
+    container_name: kiana
+    image: ghcr.io/haukuen/kiana:latest
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env.prod
+    environment:
+      ENVIRONMENT: prod
+      HOST: "${HOST:-0.0.0.0}"
+      PORT: "${PORT:-8080}"
+    volumes:
+      - ./config/nonebot2:/root/.config/nonebot2
+    restart: always
+```
+
 
 ## 文档
 
