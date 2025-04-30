@@ -1,0 +1,30 @@
+# 基本配置
+line-length = 100
+
+exclude = [
+    ".venv",
+    "__pycache__",
+    "migrations",
+    "tests",
+]
+
+fix = true
+
+[lint]
+select = [
+    "E",  # pycodestyle 错误（如语法问题）
+    "W",  # pycodestyle 警告
+    "F",  # Pyflakes（未使用变量、导入等）
+    "I",  # isort（导入排序）
+    "B",  # flake8-bugbear（常见 bug 检查）
+    "C",  # 复杂度检查
+]
+
+ignore = [
+    "E501",  # 行长度过长
+]
+
+[lint.isort]
+combine-as-imports = true  # 合并 as 导入
+known-first-party = ["kiana"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]

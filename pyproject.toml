@@ -34,7 +34,6 @@ adapters = [
     { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" },
 ]
 plugins = [
-    "nonebot_plugin_memes",
     "nonebot_plugin_withdraw",
 ]
 plugin_dirs = ["src/plugins"]
