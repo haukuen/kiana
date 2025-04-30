@@ -372,7 +372,7 @@ requires-dist = [
     { name = "langid", specifier = ">=1.1.6" },
     { name = "nonebot-adapter-onebot", specifier = ">=2.4.3" },
     { name = "nonebot-plugin-alconna", specifier = ">=0.53.1" },
-    { name = "nonebot-plugin-apscheduler", specifier = ">=0.2.0,<0.3.0" },
+    { name = "nonebot-plugin-apscheduler", specifier = ">=0.5.0" },
     { name = "nonebot-plugin-htmlrender", specifier = ">=0.4.0,<=0.6.0" },
     { name = "nonebot-plugin-localstore", specifier = ">=0.7.1" },
     { name = "nonebot-plugin-orm", extras = ["default"], specifier = ">=0.7.6" },
@@ -547,15 +547,16 @@ wheels = [
 
 [[package]]
 name = "nonebot-plugin-apscheduler"
-version = "0.2.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apscheduler" },
     { name = "nonebot2" },
+    { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/34/11d54a11bf7c6256bf61598e9f2b93df6bf4b1cc2b58f26ff1140539be81/nonebot-plugin-apscheduler-0.2.0.tar.gz", hash = "sha256:7b63e99a611b657533b48fcf1f8c6627c18c2eb3fa820a906cd4ec4666c0ceb0", size = 3672 }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/53/019bfea58c506c0166d8ef77959fd8676019469d0d3d8e135ae8f1a4b772/nonebot_plugin_apscheduler-0.5.0.tar.gz", hash = "sha256:6c0230e99765f275dc83d6639ff33bd6f71203fa10cd1b8a204b0f95530cda86", size = 3816 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/e0/08455966af13f69ee39b14ac345f77c5a7c5b2fbd671b0182a18e195173f/nonebot_plugin_apscheduler-0.2.0-py3-none-any.whl", hash = "sha256:9285ee84ca1cfa4db73c86cedb5911bbbd25a21ec0cd5f22447cd12f89e48fb4", size = 3852 },
+    { url = "https://files.pythonhosted.org/packages/fb/f4/8a3334dcd91e368d2f4e2b21f4805ac70b5dd8a1f9dac94fea5269e82bd3/nonebot_plugin_apscheduler-0.5.0-py3-none-any.whl", hash = "sha256:8b99b5ee60c4bc195d4df2fd27dab3d6963691e3332f6cee31a06eb4277c307f", size = 4307 },
 ]
 
 [[package]]
