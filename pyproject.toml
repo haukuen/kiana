@@ -1,6 +1,6 @@
 [project]
 name = "kiana"
-version = "0.1.0"
+version = "0.2.0"
 description = "kiana"
 readme = "README.md"
 requires-python = ">=3.11, <3.12"
@@ -25,7 +25,6 @@ dependencies = [
     "numpy>=1.20.0,<2.0.0",
     "nonebot-plugin-withdraw>=0.4.0",
     "nonebot-plugin-orm[default]>=0.7.6",
-    "nonebot-plugin-memes>=0.7.11",
     "nonebot-session-to-uninfo>=0.0.2",
 ]
 
@@ -33,11 +32,9 @@ dependencies = [
 adapters = [
     { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" },
 ]
-plugins = [
-    "nonebot_plugin_withdraw",
-]
+plugins = ["nonebot_plugin_withdraw"]
 plugin_dirs = ["src/plugins"]
 builtin_plugins = []
 
-[project.optional-dependencies]
-dev = ["ruff>=0.9.6"]
+[dependency-groups]
+dev = ["ruff>=0.11.7"]
