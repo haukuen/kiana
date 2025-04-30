@@ -34,13 +34,16 @@ def has_image() -> Rule:
     return Rule(_has_image)
 
 
-anime_trace = on_command("搜番", aliases={"以图搜番"}, priority=10, block=True)
+anime_trace = on_command("搜番", aliases={"以图搜番"}, priority=1, block=True)
 
 
 @anime_trace.handle()
-async def handle_anime_trace(bot: Bot, event: MessageEvent, state: T_State, msg: Message = None):
-    if msg is None:
-        msg = CommandArg()
+async def handle_anime_trace(
+    bot: Bot,
+    event: MessageEvent,
+    state: T_State,
+    msg: Message = CommandArg(),  # noqa: B008
+):
     # 首先检查是否是回复消息
     if event.reply:
         for seg in event.reply.message:

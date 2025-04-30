@@ -12,8 +12,4 @@ COPY . /app/
 
 RUN uv sync --no-dev
 
-COPY start.sh /start.sh
-
-RUN chmod +x /start.sh
-
-CMD ["/start.sh"]
+CMD ["nb", "run"]
