@@ -1,8 +1,9 @@
-import nonebot
-from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
 import sys
+
+import nonebot
 from nonebot import logger
-from nonebot.log import logger_id, default_format, default_filter
+from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
+from nonebot.log import default_filter, default_format, logger_id
 
 # 移除 NoneBot 默认的日志处理器
 logger.remove(logger_id)
@@ -13,30 +14,30 @@ logger.add(
     level=0,
     diagnose=True,
     format="<g>{time:MM-DD HH:mm:ss}</g> [<lvl>{level}</lvl>] <c><u>{name}</u></c> | {message}",
-    filter=default_filter
+    filter=default_filter,
 )
 
 # 修改日志轮转配置
 logger.add(
-    "log/info.log", 
-    level="INFO", 
-    format=default_format, 
+    "log/info.log",
+    level="INFO",
+    format=default_format,
     rotation="00:00",
-    retention="30 days"
+    retention="30 days",
 )
 logger.add(
-    "log/debug.log", 
-    level="DEBUG", 
-    format=default_format, 
+    "log/debug.log",
+    level="DEBUG",
+    format=default_format,
     rotation="00:00",
-    retention="7 days" 
+    retention="7 days",
 )
 logger.add(
-    "log/error.log", 
-    level="ERROR", 
-    format=default_format, 
+    "log/error.log",
+    level="ERROR",
+    format=default_format,
     rotation="00:00",
-    retention="30 days"
+    retention="30 days",
 )
 
 nonebot.init()

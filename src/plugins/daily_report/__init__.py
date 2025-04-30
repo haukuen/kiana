@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import asyncio
 import random
 from datetime import datetime
@@ -28,7 +29,7 @@ from nonebot_plugin_alconna import (
     store_true,
 )
 from nonebot_plugin_apscheduler import scheduler
-from nonebot_plugin_uninfo import Uninfo, get_interface
+from nonebot_plugin_uninfo import get_interface
 
 from .config import REPORT_PATH, Conifg, config
 from .data_source import Report, group_manager
@@ -77,28 +78,22 @@ _status_matcher.shortcut(
     prefix=True,
 )
 
-_reset_matcher = on_alconna(
-    Alconna("重置虫虫日报"), priority=5, block=True, permission=SUPERUSER
-)
+_reset_matcher = on_alconna(Alconna("重置虫虫日报"), priority=5, block=True, permission=SUPERUSER)
 
 
 @_status_matcher.handle()
-async def _(
-    arparma: Arparma,
-    gid_list: Query[tuple[str, ...]] = Query("gid_list"),
-):
-    for gid in gid_list.result:
+async def _(arparma: Arparma):
+    gid_list = Query("gid_list").result
+    for gid in gid_list:
         if arparma.find("close"):
             group_manager.add(gid)
         else:
             group_manager.remove(gid)
     group_manager.save()
-    await UniMessage(
-        f"已{'关闭' if arparma.find('close') else '开启'}以上群组日报状态!"
-    ).send(reply_to=True)
-    logger.info(
-        f"{'关闭' if arparma.find('close') else '开启'}虫虫日报: {gid_list.result}"
+    await UniMessage(f"已{'关闭' if arparma.find('close') else '开启'}以上群组日报状态!").send(
+        reply_to=True
     )
+    logger.info(f"{'关闭' if arparma.find('close') else '开启'}虫虫日报: {gid_list}")
 
 
 @_reset_matcher.handle()
@@ -167,10 +162,10 @@ async def _():
     await send_daily_report("早间")
 
 
-'''@scheduler.scheduled_job(
+"""@scheduler.scheduled_job(
     "cron",
     hour=18,
     minute=0,
 )
 async def _():
-    await send_daily_report("晚间")'''
+    await send_daily_report("晚间")"""

@@ -1,18 +1,17 @@
-from nonebot import get_plugin_config, on_message, require, get_driver
-from nonebot.plugin import PluginMetadata
-from nonebot.adapters.onebot.v11 import (
-    MessageEvent,
-    MessageSegment,
-    GroupMessageEvent,
-    Bot,
-    Message,
-)
-from nonebot.params import EventMessage
-from pathlib import Path
+# ruff: noqa: E402
 import json
 import re
+from pathlib import Path
 from typing import Set
 
+from nonebot import get_driver, get_plugin_config, on_message, require
+from nonebot.adapters.onebot.v11 import (
+    Bot,
+    GroupMessageEvent,
+    Message,
+    MessageSegment,
+)
+from nonebot.plugin import PluginMetadata
 
 require("nonebot_plugin_localstore")
 import nonebot_plugin_localstore as store
@@ -54,11 +53,13 @@ add_nickname_matcher = on_message(rule=is_adding_nickname, priority=5, block=Tru
 
 
 # 添加昵称验证正则表达式
-VALID_NICKNAME_PATTERN = re.compile(r'^[\u4e00-\u9fa5a-zA-Z0-9]+$')
+VALID_NICKNAME_PATTERN = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9]+$")
+
 
 # 昵称验证函数
 def is_valid_nickname(nickname: str) -> bool:
     return bool(VALID_NICKNAME_PATTERN.match(nickname))
+
 
 @add_nickname_matcher.handle()
 async def handle_add_nickname(event: GroupMessageEvent):
@@ -158,61 +159,60 @@ async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent):
 async def is_deleting_nickname(event: GroupMessageEvent) -> bool:
     msg = event.message
     text = msg.extract_plain_text().strip()
-    return text.startswith(("删除昵称", "移除昵称")) and any(
-        seg.type == "at" for seg in msg
-    )
+    return text.startswith(("删除昵称", "移除昵称")) and any(seg.type == "at" for seg in msg)
+
 
 delete_nickname_matcher = on_message(rule=is_deleting_nickname, priority=5, block=True)
+
 
 @delete_nickname_matcher.handle()
 async def handle_delete_nickname(event: GroupMessageEvent, bot: Bot):
     msg = event.message
     text = msg.extract_plain_text().strip()
-    
+
     # 分割命令和参数
-    command_match = re.match(r'^(删除昵称|移除昵称)\s+(.+)$', text)
+    command_match = re.match(r"^(删除昵称|移除昵称)\s+(.+)$", text)
     if not command_match:
         await delete_nickname_matcher.finish("请指定要删除的昵称")
         return
-    
+
     # 使用空格分割多个昵称
     nicknames = [n.strip() for n in command_match.group(2).split()]
     group_id = str(event.group_id)
-    
+
     success = []
     not_found = []
-    
+
     with open(plugin_config_file, "r+", encoding="utf-8") as f:
         data = json.load(f)
         group_data = data.get(group_id, {})
-        
+
         for nickname in nicknames:
             if nickname in group_data:
                 del group_data[nickname]
                 success.append(nickname)
             else:
                 not_found.append(nickname)
-        
+
         if success:  # 只有在有成功删除的情况下才写入文件
             data[group_id] = group_data
             f.seek(0)
             f.truncate()
             json.dump(data, f, ensure_ascii=False, indent=4)
-    
+
     # 构建回复消息
     reply = []
     if success:
         reply.append(f"成功删除昵称：{' '.join(success)}")
     if not_found:
         reply.append(f"以下昵称不存在：{' '.join(not_found)}")
-    
+
     if not reply:
         reply_msg = "未删除任何昵称"
     else:
         reply_msg = "\n".join(reply)
-    
-    await delete_nickname_matcher.finish(reply_msg)
 
+    await delete_nickname_matcher.finish(reply_msg)
 
 
 # 查询昵称处理函数
@@ -223,33 +223,35 @@ async def is_querying_nickname(event: GroupMessageEvent) -> bool:
     text = msg.extract_plain_text().strip()
     return has_at and text == "昵称"
 
+
 query_nickname_matcher = on_message(rule=is_querying_nickname, priority=5, block=True)
+
 
 @query_nickname_matcher.handle()
 async def handle_query_nickname(event: GroupMessageEvent):
     msg = event.message
     at_qq = None
-    
+
     # 提取被@的QQ号
     for seg in msg:
         if seg.type == "at":
             at_qq = seg.data.get("qq")
             break
-    
+
     if not at_qq:
         return
-    
+
     # 读取数据
     group_id = str(event.group_id)
     with open(plugin_config_file, "r", encoding="utf-8") as f:
         data = json.load(f).get(group_id, {})
-    
+
     # 查找该用户的所有昵称
     nicknames = [nick for nick, qq in data.items() if qq == at_qq]
-    
+
     if not nicknames:
         await query_nickname_matcher.finish("该用户尚未设置任何昵称")
         return
-    
+
     reply = f"当前用户的昵称：{', '.join(nicknames)}"
     await query_nickname_matcher.finish(reply)

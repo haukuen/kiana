@@ -13,7 +13,6 @@ TEMPLATE_PATH = Path(__file__).parent
 
 
 class Conifg(BaseModel):
-
     alapi_token: str = ""
     """alapi token，在 https://admin.alapi.cn/user/login 登录后获取token"""
     auto_send: bool = True

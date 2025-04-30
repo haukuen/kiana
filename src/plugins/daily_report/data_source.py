@@ -7,7 +7,6 @@ import httpx
 import tenacity
 from httpx import ConnectError, HTTPStatusError, Response, TimeoutException
 from nonebot.log import logger
-from nonebot.utils import run_sync
 from nonebot_plugin_htmlrender import template_to_pic
 from tenacity import retry, stop_after_attempt, wait_fixed
 from zhdate import ZhDate
@@ -16,7 +15,7 @@ from .config import (
     DATA_PATH,
     TEMPLATE_PATH,
     Hitokoto,
-    SixData, 
+    SixData,
     config,
     favs_arr,
     favs_list,
@@ -24,7 +23,6 @@ from .config import (
 
 
 class GroupManage:
-
     def __init__(self):
         self._file = DATA_PATH / "data.json"
         self._data = []
@@ -57,11 +55,7 @@ class AsyncHttpx:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
-        retry=(
-            tenacity.retry_if_exception_type(
-                (TimeoutException, ConnectError, HTTPStatusError)
-            )
-        ),
+        retry=(tenacity.retry_if_exception_type((TimeoutException, ConnectError, HTTPStatusError))),
     )
     async def get(cls, url: str) -> Response:
         async with httpx.AsyncClient() as client:
@@ -77,15 +71,9 @@ class AsyncHttpx:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
-        retry=(
-            tenacity.retry_if_exception_type(
-                (TimeoutException, ConnectError, HTTPStatusError)
-            )
-        ),
+        retry=(tenacity.retry_if_exception_type((TimeoutException, ConnectError, HTTPStatusError))),
     )
-    async def post(
-        cls, url: str, data: dict[str, str], headers: dict[str, str]
-    ) -> Response:
+    async def post(cls, url: str, data: dict[str, str], headers: dict[str, str]) -> Response:
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(url, data=data, headers=headers)
@@ -106,7 +94,7 @@ class Report:
 
     week = {
         0: "一",
-        1: "二", 
+        1: "二",
         2: "三",
         3: "四",
         4: "五",
@@ -159,8 +147,7 @@ class Report:
         for i in range(0, len(favs_arr), 2):
             if favs_arr[i] >= n:
                 result.extend(
-                    (favs_arr[i + j] - n, favs_list[favs_arr[i + j + 1]])
-                    for j in range(0, 14, 2)
+                    (favs_arr[i + j] - n, favs_list[favs_arr[i + j + 1]]) for j in range(0, 14, 2)
                 )
                 break
         return result
