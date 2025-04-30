@@ -1,6 +1,6 @@
 [project]
 name = "kiana"
-version = "0.2.1"
+version = "0.2.2"
 description = "kiana"
 readme = "README.md"
 requires-python = ">=3.11, <3.12"
@@ -26,6 +26,7 @@ dependencies = [
     "nonebot-plugin-withdraw>=0.4.0",
     "nonebot-plugin-orm[default]>=0.7.6",
     "nonebot-session-to-uninfo>=0.0.2",
+    "matplotlib>=3.10.1",
 ]
 
 [tool.nonebot]
