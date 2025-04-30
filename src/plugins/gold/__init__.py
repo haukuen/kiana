@@ -63,6 +63,8 @@ async def record_price():
 
 def generate_chart() -> bytes:
     """生成金价走势图"""
+    plt.style.use("bmh")
+
     plt.figure(figsize=(12, 6))
     plt.clf()
 
@@ -71,9 +73,6 @@ def generate_chart() -> bytes:
     times = [datetime.fromtimestamp(t).astimezone() for t in times]
 
     plt.plot(times, prices)
-    plt.title("黄金价格走势")
-    plt.xlabel("时间")
-    plt.ylabel("价格")
     plt.grid(True)
 
     # 自动调整x轴日期格式
