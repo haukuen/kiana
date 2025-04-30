@@ -40,7 +40,6 @@ services:
     environment:
       ENVIRONMENT: prod
       HOST: "${HOST:-0.0.0.0}"
-      PORT: "${PORT:-8080}"
     volumes:
       - ./config/nonebot2:/root/.config/nonebot2
     restart: always
