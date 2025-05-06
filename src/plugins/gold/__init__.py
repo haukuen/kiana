@@ -4,12 +4,15 @@ import json
 import time
 from collections import deque
 from datetime import datetime
-from typing import Deque, Tuple
+from typing import Deque, List, Tuple
 
 import matplotlib.pyplot as plt
-from nonebot import get_plugin_config, logger, on_fullmatch, require
+from nonebot import get_driver, get_plugin_config, logger, on_fullmatch, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.plugin import PluginMetadata
+
+require("nonebot_plugin_localstore")
+import nonebot_plugin_localstore as store
 
 from .config import Config
 
@@ -33,6 +36,36 @@ price_history: Deque[Tuple[float, float]] = deque(maxlen=8640)  # 24小时 * 360
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
+PRICE_DATA_FILE = store.get_data_file('gold', 'price_history.json')
+driver = get_driver()
+
+# 保存间隔时间
+SAVE_INTERVAL = 300
+last_save_time = 0
+
+def save_price_history() -> None:
+    """保存价格历史到文件"""
+    try:
+        PRICE_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(PRICE_DATA_FILE, 'w', encoding='utf-8') as f:
+            # 转换为列表存储
+            data = list(price_history)
+            json.dump(data, f)
+        logger.info(f"已保存 {len(price_history)} 条金价数据")
+    except Exception as e:
+        logger.error(f"保存金价数据失败: {e}")
+
+def load_price_history() -> None:
+    """从文件加载价格历史"""
+    try:
+        if PRICE_DATA_FILE.exists():
+            with open(PRICE_DATA_FILE, 'r', encoding='utf-8') as f:
+                data: List[Tuple[float, float]] = json.load(f)
+                price_history.clear()
+                price_history.extend(data)
+            logger.info(f"已加载 {len(data)} 条历史金价数据")
+    except Exception as e:
+        logger.error(f"加载历史金价数据失败: {e}")
 
 async def fetch_gold_price() -> float | None:
     """获取金价"""
@@ -56,10 +89,17 @@ async def fetch_gold_price() -> float | None:
 @scheduler.scheduled_job("interval", seconds=10)
 async def record_price():
     """每10秒记录一次金价"""
+    global last_save_time
+    current_time = time.time()
+
     price = await fetch_gold_price()
     if price is not None:
-        price_history.append((time.time(), price))
+        price_history.append((current_time, price))
 
+        # 每隔 SAVE_INTERVAL 秒保存一次
+        if current_time - last_save_time >= SAVE_INTERVAL:
+            save_price_history()
+            last_save_time = current_time
 
 def generate_chart() -> bytes:
     """生成金价走势图"""
@@ -78,12 +118,10 @@ def generate_chart() -> bytes:
     # 自动调整x轴日期格式
     plt.gcf().autofmt_xdate()
 
-    # 将图表保存到内存中
     buf = io.BytesIO()
     plt.savefig(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
-
 
 @gold.handle()
 async def _(bot: Bot, event: Event):
@@ -130,3 +168,12 @@ async def _(bot: Bot, event: Event):
         await gold_chart.send(MessageSegment.image(image_data))
     except Exception as e:
         await gold_chart.send(f"生成图表失败: {str(e)}")
+
+@driver.on_startup
+async def _():
+    load_price_history()
+
+@driver.on_shutdown
+async def _():
+    """退出时保存数据"""
+    save_price_history()
