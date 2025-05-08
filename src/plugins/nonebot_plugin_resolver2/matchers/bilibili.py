@@ -3,11 +3,11 @@ from pathlib import Path
 import re
 
 from nonebot import logger, on_command, on_message
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.adapters.onebot.v11.exception import ActionFailed
 from nonebot.params import CommandArg
 
-from ..config import DURATION_MAXIMUM, NEED_UPLOAD, NICKNAME, plugin_cache_dir
+from ..config import DURATION_MAXIMUM, NEED_UPLOAD, plugin_cache_dir
 from ..download import (
     download_file_by_stream,
     download_img,
@@ -36,7 +36,9 @@ PATTERNS: dict[str, re.Pattern] = {
     "/av": re.compile(r"/av(\d{6,})()"),
     "b23": re.compile(r"https?://b23\.tv/[A-Za-z\d\._?%&+\-=/#]+()()"),
     "bili2233": re.compile(r"https?://bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+()()"),
-    "bilibili": re.compile(r"https?://(?:space|www|live|m|t)?\.?bilibili\.com/[A-Za-z\d\._?%&+\-=/#]+()()"),
+    "bilibili": re.compile(
+        r"https?://(?:space|www|live|m|t)?\.?bilibili\.com/[A-Za-z\d\._?%&+\-=/#]+()()"
+    ),
 }
 
 parser = BilibiliParser()
@@ -65,7 +67,7 @@ async def _(text: str = ExtractText(), keyword: str = Keyword()):
         if matched := PATTERNS[id_type].search(url):
             keyword = id_type
             video_id = str(matched.group(1))
-            
+
     # 如果不是视频
     if not video_id:
         # 动态
@@ -131,7 +133,7 @@ async def _(text: str = ExtractText(), keyword: str = Keyword()):
             paths: list[Path] = await download_imgs_without_raise(urls)
             segs = []
             # 组合 text 和 image
-            for path, text in zip(paths, texts):
+            for path, text in zip(paths, texts, strict=False):
                 segs.append(get_img_seg(path) + text)
             await send_segments(segs)
             await bilibili.finish()
@@ -166,14 +168,18 @@ async def _(text: str = ExtractText(), keyword: str = Keyword()):
         # 下载视频和音频
         v_path, a_path = await asyncio.gather(
             download_file_by_stream(
-                video_info.video_url, file_name=f"{file_name_prefix}-video.m4s", ext_headers=parser.headers
+                video_info.video_url,
+                file_name=f"{file_name_prefix}-video.m4s",
+                ext_headers=parser.headers,
             ),
             download_file_by_stream(
-                video_info.audio_url, file_name=f"{file_name_prefix}-audio.m4s", ext_headers=parser.headers
+                video_info.audio_url,
+                file_name=f"{file_name_prefix}-audio.m4s",
+                ext_headers=parser.headers,
             ),
         )
         await merge_av(v_path=v_path, a_path=a_path, output_path=video_path)
-        
+
     # 发送视频
     try:
         await bilibili.send(get_video_seg(video_path))
@@ -208,7 +214,9 @@ async def _(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     audio_path = plugin_cache_dir / audio_name
     # 下载
     if not audio_path.exists():
-        await download_file_by_stream(video_info.audio_url, file_name=audio_name, ext_headers=parser.headers)
+        await download_file_by_stream(
+            video_info.audio_url, file_name=audio_name, ext_headers=parser.headers
+        )
 
     # 发送音频
     await bili_music.send(get_record_seg(audio_path))

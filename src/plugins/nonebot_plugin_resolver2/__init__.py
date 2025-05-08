@@ -6,9 +6,7 @@ from .config import (
     plugin_cache_dir,
     rconfig,
     scheduler,
-    ytb_cookies_file,
 )
-from .cookie import save_cookies_to_netscape
 from .matchers import resolvers
 
 __plugin_meta__ = PluginMetadata(
