@@ -31,8 +31,7 @@ gold_chart = on_fullmatch(("金价走势", "金价趋势", "黄金走势", "黄�
 # 存储冷却时间的字典，每个群单独冷却
 cooldown_dict = {}
 
-# 存储最近24小时的金价数据 (时间戳, 价格)
-price_history: Deque[Tuple[float, float]] = deque(maxlen=8640)  # 24小时 * 360条/小时
+price_history: Deque[Tuple[float, float]] = deque(maxlen=86400)
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
@@ -175,5 +174,4 @@ async def _():
 
 @driver.on_shutdown
 async def _():
-    """退出时保存数据"""
     save_price_history()
