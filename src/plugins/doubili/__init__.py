@@ -25,6 +25,7 @@ PATTERNS = {
     "/BV": re.compile(r"/(BV[1-9a-zA-Z]{10})"),
     "/av": re.compile(r"/av(\d{6,})"),
     "b23": re.compile(r"https?://b23\.tv/[A-Za-z\d\._?%&+\-=/#]+"),
+    "bili2233": re.compile(r"https?://bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+"),
     "bilibili": re.compile(r"https?://(?:www|m)?\.?bilibili\.com/video/[A-Za-z\d\._?%&+\-=/#]+"),
 }
 
@@ -53,7 +54,7 @@ async def extract_video_id(text: str) -> tuple[str, str]:
     for key, pattern in PATTERNS.items():
         if matched := pattern.search(text):
             # 如果是短链接，先获取重定向后的URL
-            if key == "b23":
+            if key in ("b23", "bili2233"):
                 url = await get_redirect_url(matched.group(0), config.API_HEADERS)
                 return await extract_video_id(url)
 
