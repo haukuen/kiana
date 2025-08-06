@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-core>=2.27.0",
     "nonebot-plugin-withdraw>=0.4.0",
     "matplotlib>=3.10.1",
+    "numpy>=2.3.0",
 ]
 
 [tool.nonebot]
