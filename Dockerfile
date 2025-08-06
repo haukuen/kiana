@@ -1,6 +1,6 @@
-FROM --platform=$BUILDPLATFORM python:3.12-slim-bookworm
+FROM --platform=$BUILDPLATFORM python:3.13-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.6.17 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.5 /uv /uvx /bin/
 
 RUN apt-get update && \
     apt-get install -y ffmpeg && \
@@ -15,6 +15,6 @@ WORKDIR /app
 
 COPY . /app/
 
-RUN uv sync --no-dev
+RUN uv sync --locked
 
 CMD ["nb", "run"]

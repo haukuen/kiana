@@ -1,9 +1,9 @@
 [project]
 name = "kiana"
-version = "0.3.1"
+version = "0.3.2"
 description = "kiana"
 readme = "README.md"
-requires-python = ">=3.11, <3.12"
+requires-python = ">=3.13, <3.14"
 dependencies = [
     "nonebot-adapter-onebot>=2.4.3",
     "nonebot2[fastapi]>=2.2.1",
