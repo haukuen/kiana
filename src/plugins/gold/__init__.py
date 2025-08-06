@@ -88,9 +88,9 @@ async def fetch_gold_price() -> float | None:
         return None
 
 
-@scheduler.scheduled_job("interval", seconds=10)
+@scheduler.scheduled_job("interval", seconds=60)
 async def record_price():
-    """每10秒记录一次金价"""
+    """每60秒记录一次金价"""
     global last_save_time
     current_time = time.time()
 
