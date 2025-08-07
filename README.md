@@ -39,9 +39,10 @@ services:
       - .env.prod
     environment:
       ENVIRONMENT: prod
-      HOST: "${HOST:-0.0.0.0}"
     volumes:
       - ./config/nonebot2:/root/.config/nonebot2
+      - ./cache/nonebot2:/root/.cache/nonebot2
+      - ./data/nonebot2:/root/.local/share/nonebot2
     restart: always
 ```
 
