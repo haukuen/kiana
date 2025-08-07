@@ -1,5 +1,4 @@
 import re
-from typing import Dict
 
 from httpx import AsyncClient
 from nonebot import get_plugin_config, logger
@@ -87,7 +86,7 @@ async def extract_video_id(text: str) -> tuple[str, str]:
     return "", ""
 
 
-async def get_video_info(bvid: str = None, aid: int = None):
+async def get_video_info(bvid: str | None = None, aid: int | None = None):
     """获取 Bilibili 视频详细信息"""
     if not bvid and not aid:
         return "必须提供 bvid 或 aid 参数！"
@@ -110,7 +109,7 @@ async def get_video_info(bvid: str = None, aid: int = None):
         return data["data"]
 
 
-async def get_video_stream(bvid: str = None, aid: int = None) -> Dict | str:
+async def get_video_stream(bvid: str | None = None, aid: int | None = None) -> dict | str:
     """获取 Bilibili 视频流信息"""
     video_info = await get_video_info(bvid=bvid, aid=aid)
     if isinstance(video_info, str):  # 如果返回的是错误信息

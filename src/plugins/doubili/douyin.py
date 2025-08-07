@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from httpx import AsyncClient
 from nonebot import logger
@@ -47,7 +47,7 @@ class DouyinParser:
     def _build_m_douyin_url(self, _type: str, video_id: str) -> str:
         return f"https://m.douyin.com/share/{_type}/{video_id}"
 
-    async def get_video_info(self, video_id: str) -> Dict | str:
+    async def get_video_info(self, video_id: str) -> dict | str:
         """获取抖音视频信息"""
         try:
             share_url = f"https://www.douyin.com/video/{video_id}"
@@ -60,7 +60,7 @@ class DouyinParser:
             }
         except Exception as e:
             logger.error(f"解析抖音视频失败: {e}")
-            return f"获取视频信息失败: {str(e)}"
+            return f"获取视频信息失败: {e!s}"
 
     async def parse_video(self, url: str) -> ParseResult:
         async with AsyncClient() as client:
@@ -94,13 +94,13 @@ class DouyinParser:
 
         json_data = json.loads(find_res.group(1).strip())
 
-        VIDEO_ID_PAGE_KEY = "video_(id)/page"
-        NOTE_ID_PAGE_KEY = "note_(id)/page"
+        video_id_page_key = "video_(id)/page"
+        note_id_page_key = "note_(id)/page"
 
-        if VIDEO_ID_PAGE_KEY in json_data["loaderData"]:
-            original_video_info = json_data["loaderData"][VIDEO_ID_PAGE_KEY]["videoInfoRes"]
-        elif NOTE_ID_PAGE_KEY in json_data["loaderData"]:
-            original_video_info = json_data["loaderData"][NOTE_ID_PAGE_KEY]["videoInfoRes"]
+        if video_id_page_key in json_data["loaderData"]:
+            original_video_info = json_data["loaderData"][video_id_page_key]["videoInfoRes"]
+        elif note_id_page_key in json_data["loaderData"]:
+            original_video_info = json_data["loaderData"][note_id_page_key]["videoInfoRes"]
         else:
             raise Exception("无法解析视频信息")
 
@@ -191,7 +191,7 @@ async def extract_video_id(text: str) -> str:
 douyin_parser = DouyinParser()
 
 
-async def get_video_info(video_id: str) -> Dict | str:
+async def get_video_info(video_id: str) -> dict | str:
     """获取抖音视频信息"""
     logger.info(f"尝试获取抖音视频信息: {video_id}")
     try:
@@ -202,4 +202,4 @@ async def get_video_info(video_id: str) -> Dict | str:
         return {"url": video_info.video_url, "headers": IOS_HEADER, "title": video_info.title}
     except Exception as e:
         logger.error(f"解析抖音视频失败: {e}")
-        return f"获取视频信息失败: {str(e)}"
+        return f"获取视频信息失败: {e!s}"

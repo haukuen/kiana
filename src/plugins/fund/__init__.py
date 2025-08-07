@@ -1,7 +1,6 @@
 import io
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
 
 import httpx
 import matplotlib.dates as mdates
@@ -25,16 +24,16 @@ class FundData:
     def __init__(self):
         self.name: str = ""
         self.code: str = ""
-        self.net_worth_trend: List[Dict] = []
+        self.net_worth_trend: list[dict] = []
         self.syl_1y: str = ""  # 近一月收益率
         self.syl_3y: str = ""  # 近三月收益率
         self.syl_6y: str = ""  # 近六月收益率
         self.syl_1n: str = ""  # 近一年收益率
         self.current_net_worth: float = 0.0  # 当前净值
-        self.return_data: List[Dict] = []  # 收益率走势数据
+        self.return_data: list[dict] = []  # 收益率走势数据
 
 
-def _parse_fund_data(content: str, fund_code: str) -> Optional[FundData]:
+def _parse_fund_data(content: str, fund_code: str) -> FundData | None:
     """从获取的js脚本内容中解析基金数据"""
     fund_data = FundData()
     fund_data.code = fund_code
@@ -75,7 +74,7 @@ def _parse_fund_data(content: str, fund_code: str) -> Optional[FundData]:
     return fund_data
 
 
-async def fetch_fund_data(fund_code: str) -> Optional[FundData]:
+async def fetch_fund_data(fund_code: str) -> FundData | None:
     """
     获取基金数据
 

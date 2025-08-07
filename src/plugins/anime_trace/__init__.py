@@ -64,12 +64,12 @@ async def handle_anime_trace(
         result = await process_image(state["image"])
         await bot.send(event, result["message"])
 
-        if "video_url" in result and result["video_url"]:
+        if result.get("video_url"):
             logger.info(f"尝试发送视频: {result['video_url']}")
             await bot.send(event, MessageSegment.video(result["video_url"]))
     except Exception as e:
         logger.error(f"处理图片时发生错误: {e}", exc_info=True)
-        await bot.send(event, f"处理图片时发生错误: {str(e)}")
+        await bot.send(event, f"处理图片时发生错误: {e!s}")
 
 
 async def process_image(image_url: str):
@@ -97,7 +97,7 @@ async def process_image(image_url: str):
         raise Exception("API返回的数据格式不正确") from e
     except Exception as e:
         logger.error(f"处理图片时发生未知错误: {e}", exc_info=True)
-        raise Exception(f"处理图片时发生未知错误: {str(e)}") from e
+        raise Exception(f"处理图片时发生未知错误: {e!s}") from e
 
 
 async def download_image(image_url: str):
@@ -137,10 +137,7 @@ def parse_api_result(result):
     first_anilist = first_result["anilist"]
 
     name = detect_simplified_chinese(first_anilist.get("synonyms", []))
-    if not name:
-        name = first_anilist["title"].get("native", "未知番名")
-    else:
-        name = "、".join(name)
+    name = "、".join(name) if name else first_anilist["title"].get("native", "未知番名")
 
     time_string = convert_seconds_to_time(first_result.get("from", 0))
 

@@ -4,7 +4,6 @@ import json
 import time
 from collections import deque
 from datetime import datetime
-from typing import Deque, List, Tuple
 
 import matplotlib.pyplot as plt
 from nonebot import get_driver, get_plugin_config, logger, on_fullmatch, require
@@ -31,7 +30,7 @@ gold_chart = on_fullmatch(("金价走势", "金价趋势", "黄金走势", "黄�
 # 存储冷却时间的字典，每个群单独冷却
 cooldown_dict = {}
 
-price_history: Deque[Tuple[float, float]] = deque(maxlen=86400)
+price_history: deque[tuple[float, float]] = deque(maxlen=86400)
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
@@ -40,14 +39,32 @@ driver = get_driver()
 
 # 保存间隔时间
 SAVE_INTERVAL = 300
-last_save_time = 0
+
+
+class PriceManager:
+    """价格数据管理器"""
+
+    def __init__(self):
+        self.last_save_time = 0
+
+    def should_save(self, current_time: float) -> bool:
+        """检查是否应该保存数据"""
+        return current_time - self.last_save_time >= SAVE_INTERVAL
+
+    def update_save_time(self, current_time: float) -> None:
+        """更新最后保存时间"""
+        self.last_save_time = current_time
+
+
+# 创建价格管理器实例
+price_manager = PriceManager()
 
 
 def save_price_history() -> None:
     """保存价格历史到文件"""
     try:
         PRICE_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(PRICE_DATA_FILE, "w", encoding="utf-8") as f:
+        with PRICE_DATA_FILE.open("w", encoding="utf-8") as f:
             # 转换为列表存储
             data = list(price_history)
             json.dump(data, f)
@@ -60,8 +77,8 @@ def load_price_history() -> None:
     """从文件加载价格历史"""
     try:
         if PRICE_DATA_FILE.exists():
-            with open(PRICE_DATA_FILE, "r", encoding="utf-8") as f:
-                data: List[Tuple[float, float]] = json.load(f)
+            with PRICE_DATA_FILE.open(encoding="utf-8") as f:
+                data: list[tuple[float, float]] = json.load(f)
                 price_history.clear()
                 price_history.extend(data)
             logger.info(f"已加载 {len(data)} 条历史金价数据")
@@ -91,7 +108,6 @@ async def fetch_gold_price() -> float | None:
 @scheduler.scheduled_job("interval", seconds=60)
 async def record_price():
     """每60秒记录一次金价"""
-    global last_save_time
     current_time = time.time()
 
     price = await fetch_gold_price()
@@ -99,9 +115,9 @@ async def record_price():
         price_history.append((current_time, price))
 
         # 每隔 SAVE_INTERVAL 秒保存一次
-        if current_time - last_save_time >= SAVE_INTERVAL:
+        if price_manager.should_save(current_time):
             save_price_history()
-            last_save_time = current_time
+            price_manager.update_save_time(current_time)
 
 
 def generate_chart() -> bytes:
@@ -171,7 +187,7 @@ async def _(bot: Bot, event: Event):
         image_data = generate_chart()
         await gold_chart.send(MessageSegment.image(image_data))
     except Exception as e:
-        await gold_chart.send(f"生成图表失败: {str(e)}")
+        await gold_chart.send(f"生成图表失败: {e!s}")
 
 
 @driver.on_startup

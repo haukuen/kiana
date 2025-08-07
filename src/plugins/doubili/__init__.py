@@ -39,11 +39,7 @@ async def is_bilibili_link(event: MessageEvent) -> bool:
             logger.debug(f"解析小程序数据失败: {e}")
 
     # 检查普通链接
-    for pattern in bilibili.PATTERNS.values():
-        if pattern.search(message):
-            return True
-
-    return False
+    return any(pattern.search(message) for pattern in bilibili.PATTERNS.values())
 
 
 bilibili_matcher = on_message(

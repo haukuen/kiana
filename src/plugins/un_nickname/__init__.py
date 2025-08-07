@@ -2,7 +2,6 @@
 import json
 import re
 from pathlib import Path
-from typing import Set
 
 from nonebot import get_driver, get_plugin_config, on_message, require
 from nonebot.adapters.onebot.v11 import (
@@ -26,7 +25,7 @@ __plugin_meta__ = PluginMetadata(
 )
 
 driver = get_driver()
-superusers: Set[str] = driver.config.superusers
+superusers: set[str] = driver.config.superusers
 
 config = get_plugin_config(Config)
 
@@ -37,7 +36,7 @@ plugin_config_file: Path = store.get_config_file("un_nickname", "nicknames.json"
 # 确保存储文件存在
 if not plugin_config_file.exists():
     plugin_config_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(plugin_config_file, "w", encoding="utf-8") as f:
+    with plugin_config_file.open("w", encoding="utf-8") as f:
         json.dump({}, f)
 
 
@@ -89,7 +88,7 @@ async def handle_add_nickname(event: GroupMessageEvent):
         return
 
     # 读取并更新数据
-    with open(plugin_config_file, "r", encoding="utf-8") as f:
+    with plugin_config_file.open(encoding="utf-8") as f:
         data = json.load(f)
     group_id = str(event.group_id)
     if group_id not in data:
@@ -100,7 +99,7 @@ async def handle_add_nickname(event: GroupMessageEvent):
         await add_nickname_matcher.finish(f"昵称'{nickname}'已被其他用户占用！")
     else:
         data[group_id][nickname] = at_qq
-        with open(plugin_config_file, "w", encoding="utf-8") as f:
+        with plugin_config_file.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
         await add_nickname_matcher.finish(f"昵称'{nickname}'成功绑定到用户！")
 
@@ -112,7 +111,7 @@ replace_nickname_matcher = on_message(priority=10, block=False)
 @replace_nickname_matcher.handle()
 async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent):
     group_id = str(event.group_id)
-    with open(plugin_config_file, "r", encoding="utf-8") as f:
+    with plugin_config_file.open(encoding="utf-8") as f:
         data = json.load(f).get(group_id, {})
 
     nickname_to_qq = data
@@ -183,7 +182,7 @@ async def handle_delete_nickname(event: GroupMessageEvent, bot: Bot):
     success = []
     not_found = []
 
-    with open(plugin_config_file, "r+", encoding="utf-8") as f:
+    with plugin_config_file.open("r+", encoding="utf-8") as f:
         data = json.load(f)
         group_data = data.get(group_id, {})
 
@@ -207,10 +206,7 @@ async def handle_delete_nickname(event: GroupMessageEvent, bot: Bot):
     if not_found:
         reply.append(f"以下昵称不存在：{' '.join(not_found)}")
 
-    if not reply:
-        reply_msg = "未删除任何昵称"
-    else:
-        reply_msg = "\n".join(reply)
+    reply_msg = "\n".join(reply) if reply else "未删除任何昵称"
 
     await delete_nickname_matcher.finish(reply_msg)
 
@@ -243,7 +239,7 @@ async def handle_query_nickname(event: GroupMessageEvent):
 
     # 读取数据
     group_id = str(event.group_id)
-    with open(plugin_config_file, "r", encoding="utf-8") as f:
+    with plugin_config_file.open(encoding="utf-8") as f:
         data = json.load(f).get(group_id, {})
 
     # 查找该用户的所有昵称
