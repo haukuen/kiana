@@ -1,5 +1,5 @@
-# 基本配置
 line-length = 100
+target-version = "py313"
 
 exclude = [
     ".venv",
@@ -12,19 +12,54 @@ fix = true
 
 [lint]
 select = [
-    "E",  # pycodestyle 错误（如语法问题）
-    "W",  # pycodestyle 警告
-    "F",  # Pyflakes（未使用变量、导入等）
-    "I",  # isort（导入排序）
-    "B",  # flake8-bugbear（常见 bug 检查）
-    "C",  # 复杂度检查
+    "E",    # pycodestyle 错误
+    "W",    # pycodestyle 警告
+    "F",    # Pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C",    # 复杂度检查
+    "UP",   # pyupgrade
+    "LOG",  # logging
+    "FURB", # refurb
+    "N",    # pep8-naming (命名规范)
+    "S",    # bandit (安全检查)
+    "T20",  # flake8-print
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "PTH",  # flake8-use-pathlib
+    "ERA",  # eradicate
+    "PL",   # pylint
+    "RUF",  # ruff 特有规则
 ]
 
 ignore = [
-    "E501",  # 行长度过长
+    "E501",    # 行长度过长
+    "S101",    # 使用 assert
+    "T201",    # print 语句
+    "PLR0913", # 函数参数过多
+    "PLR2004", # 魔法数字
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+# McCabe 复杂度配置
+[lint.mccabe]
+max-complexity = 10
+
+# pylint 配置
+[lint.pylint]
+max-args = 8
+max-branches = 15
+max-returns = 8
+max-statements = 60
+
 [lint.isort]
-combine-as-imports = true  # 合并 as 导入
+combine-as-imports = true
 known-first-party = ["kiana"]
+known-third-party = ["nonebot", "nonebot2"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+split-on-trailing-comma = true
