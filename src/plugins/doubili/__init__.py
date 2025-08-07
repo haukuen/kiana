@@ -23,7 +23,6 @@ config = get_plugin_config(Config)
 
 
 async def is_bilibili_link(event: MessageEvent) -> bool:
-    print("env", config)
     """检查是否为B站链接且B站解析已启用"""
     if not config.enable_bilibili:
         return False
