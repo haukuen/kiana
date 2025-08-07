@@ -32,17 +32,16 @@ nb run --reload
 services:
   kiana:
     container_name: kiana
-    image: ghcr.io/haukuen/kiana:latest
+    image: ghcr.exusiai.top/haukuen/kiana:latest
     ports:
-      - "${PORT:-8080}:8080"
-    env_file:
-      - .env.prod
+      - "${PORT:-8080}:${PORT:-8080}"
     environment:
-      ENVIRONMENT: prod
+      HOST: "${HOST:-0.0.0.0}"
     volumes:
       - ./config/nonebot2:/root/.config/nonebot2
       - ./cache/nonebot2:/root/.cache/nonebot2
       - ./data/nonebot2:/root/.local/share/nonebot2
+      - ./.env.prod:/app/.env.prod:ro
     restart: always
 ```
 
