@@ -105,9 +105,9 @@ async def fetch_gold_price() -> float | None:
         return None
 
 
-@scheduler.scheduled_job("interval", seconds=60)
+@scheduler.scheduled_job("interval", seconds=config.price_fetch_interval)
 async def record_price():
-    """每60秒记录一次金价"""
+    """定时记录金价"""
     current_time = time.time()
 
     price = await fetch_gold_price()
@@ -153,11 +153,11 @@ async def _(bot: Bot, event: Event):
 
     # 检查是否在冷却时间内
     if (
-        cooldown_dict.get(group_id, {}).get("last_call_time", 0) + config.COOLDOWN_TIME
+        cooldown_dict.get(group_id, {}).get("last_call_time", 0) + config.cooldown_time
         > current_time
     ):
         remaining_time = int(
-            cooldown_dict[group_id]["last_call_time"] + config.COOLDOWN_TIME - current_time
+            cooldown_dict[group_id]["last_call_time"] + config.cooldown_time - current_time
         )
         if remaining_time == 0:
             remaining_time = 1

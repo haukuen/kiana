@@ -2,7 +2,8 @@ from pydantic import BaseModel
 
 
 class Config(BaseModel):
-    COOLDOWN_TIME: int = 1  # 冷却时间（秒）
+    cooldown_time: int = 1  # 冷却时间（秒）
+    price_fetch_interval: int = 60  # 金价获取间隔时间（秒）
     API_URL: str = "https://mbmodule-openapi.paas.cmbchina.com/product/v1/func/market-center"
     API_HEADERS: dict = {
         "Host": "mbmodule-openapi.paas.cmbchina.com",

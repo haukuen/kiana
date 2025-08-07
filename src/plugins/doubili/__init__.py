@@ -4,7 +4,7 @@ from io import BytesIO
 from urllib.parse import unquote
 
 from httpx import AsyncClient
-from nonebot import logger, on_message
+from nonebot import get_plugin_config, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
@@ -19,8 +19,15 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
+config = get_plugin_config(Config)
+
 
 async def is_bilibili_link(event: MessageEvent) -> bool:
+    print("env", config)
+    """检查是否为B站链接且B站解析已启用"""
+    if not config.enable_bilibili:
+        return False
+
     message = str(event.message).strip()
 
     if "CQ:json" in message:
@@ -77,6 +84,10 @@ async def handle_bilibili_message(bot: Bot, event: MessageEvent):
 
 
 async def is_douyin_link(event: MessageEvent) -> bool:
+    """检查是否为抖音链接且抖音解析已启用"""
+    if not config.enable_douyin:
+        return False
+
     message = event.get_plaintext().strip()
     return bool(douyin.PATTERNS["douyin"].search(message))
 

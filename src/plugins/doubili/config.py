@@ -2,6 +2,9 @@ from pydantic import BaseModel
 
 
 class Config(BaseModel):
+    # 平台解析开关
+    enable_bilibili: bool = True
+    enable_douyin: bool = True
     BILIBILI_API_URL: str = "https://api.bilibili.com/x/player/playurl"
     BILIBILI_VIEW_API_URL: str = "https://api.bilibili.com/x/web-interface/view"
 
