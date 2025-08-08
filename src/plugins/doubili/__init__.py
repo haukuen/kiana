@@ -5,7 +5,7 @@ from urllib.parse import unquote
 
 from httpx import AsyncClient
 from nonebot import get_plugin_config, logger, on_message
-from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, MessageSegment
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
@@ -141,7 +141,7 @@ async def handle_douyin_message(bot: Bot, event: MessageEvent):
             return
 
         # 发送视频信息
-        await douyin_matcher.send(f"标题: {video_info['title']}")
+        await douyin_matcher.send(f"{video_info['title']}")
 
         # 下载并发送视频
         async with AsyncClient() as client:
@@ -201,24 +201,63 @@ async def handle_xiaohongshu_message(bot: Bot, event: MessageEvent):
             await xiaohongshu_matcher.finish(note_info)
             return
 
-        # 发送笔记信息
-        info_text = f"标题: {note_info['title']}\n作者: {note_info['author']}"
+        info_text = f"{note_info['title']}\n作者: {note_info['author']}"
         await xiaohongshu_matcher.send(info_text)
 
-        # 处理图片
         if note_info["pic_urls"]:
-            for pic_url in note_info["pic_urls"][:9]:  # 最多发送9张图片
-                try:
+            pic_urls = note_info["pic_urls"][:9]  # 最多处理9张图片
+
+            if len(pic_urls) >= 3:
+                # 图片数量>=3张，合并转发所有图片
+                logger.info(f"图片数量{len(pic_urls)}张，合并转发所有图片")
+                image_segments = []
+                for pic_url in pic_urls:
                     async with AsyncClient() as client:
                         response = await client.get(pic_url, timeout=30.0)
                         response.raise_for_status()
 
                         image_data = BytesIO(response.content)
                         image_segment = MessageSegment.image(image_data)
-                        await xiaohongshu_matcher.send(image_segment)
-                except Exception as e:
-                    logger.warning(f"下载图片失败: {e}")
-                    continue
+                        image_segments.append(image_segment)
+
+                if image_segments:
+                    # 合并转发所有图片
+                    # 构造合并转发消息节点
+                    forward_nodes = []
+                    for _, img_seg in enumerate(image_segments):
+                        node = {
+                            "type": "node",
+                            "data": {"name": "小红书图片", "uin": bot.self_id, "content": img_seg},
+                        }
+                        forward_nodes.append(node)
+
+                    # 发送合并转发消息
+                    if isinstance(event, GroupMessageEvent):
+                        await bot.call_api(
+                            "send_group_forward_msg",
+                            group_id=event.group_id,
+                            messages=forward_nodes,
+                        )
+                    else:
+                        await bot.call_api(
+                            "send_private_forward_msg",
+                            user_id=event.user_id,
+                            messages=forward_nodes,
+                        )
+            else:
+                # 图片数量<3张，直接发送
+                for pic_url in pic_urls:
+                    try:
+                        async with AsyncClient() as client:
+                            response = await client.get(pic_url, timeout=30.0)
+                            response.raise_for_status()
+
+                            image_data = BytesIO(response.content)
+                            image_segment = MessageSegment.image(image_data)
+                            await xiaohongshu_matcher.send(image_segment)
+                    except Exception as e:
+                        logger.warning(f"下载图片失败: {e}")
+                        continue
 
         # 处理视频
         elif note_info["video_url"]:
