@@ -3,6 +3,7 @@ import re
 from io import BytesIO
 from urllib.parse import unquote
 
+import httpx
 from httpx import AsyncClient
 from nonebot import get_plugin_config, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, MessageSegment
@@ -103,7 +104,6 @@ async def is_xiaohongshu_link(event: MessageEvent) -> bool:
 
     # 检查卡片消息
     if "CQ:json" in message and config.xiaohongshu_cookie:
-        return False  # 暂时解析不了卡片
         try:
             json_str = re.search(r"\[CQ:json,data=(.*?)\]", message)
             if json_str:
@@ -169,30 +169,141 @@ xiaohongshu_matcher = on_message(
 )
 
 
+async def extract_url_from_card_message(message: str) -> str:
+    """从卡片消息中提取小红书URL"""
+    if "CQ:json" not in message:
+        return ""
+
+    if not config.xiaohongshu_cookie or not config.xiaohongshu_cookie.strip():
+        logger.debug("检测到小红书卡片消息，但未配置有效cookie，跳过卡片解析")
+        return ""
+
+    try:
+        json_str = re.search(r"\[CQ:json,data=(.*?)\]", message)
+        if not json_str:
+            return ""
+
+        json_data = json.loads(unquote(json_str.group(1).replace("&#44;", ",")))
+        if "meta" not in json_data or "news" not in json_data["meta"]:
+            return ""
+
+        news = json_data["meta"]["news"]
+        jump_url = news.get("jumpUrl", "")
+
+        if "xiaohongshu.com" not in jump_url and "xhslink.com" not in jump_url:
+            return ""
+
+        return await process_xiaohongshu_url(jump_url)
+
+    except Exception as e:
+        logger.debug(f"从卡片消息提取小红书链接失败: {e}")
+        return ""
+
+
+async def process_xiaohongshu_url(jump_url: str) -> str:
+    """处理小红书URL，包括短链接解析和参数提取"""
+    import html
+    from urllib.parse import parse_qs, urlparse
+
+    # 处理短链接
+    if "xhslink" in jump_url:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(jump_url, follow_redirects=True)
+            jump_url = str(response.url)
+
+    # 提取笔记ID
+    pattern = r"(?:/explore/|/discovery/item/|source=note&noteId=)(\w+)"
+    matched = re.search(pattern, jump_url)
+
+    if not matched:
+        # 如果无法提取ID，回退到原来的方法
+        return await xiaohongshu.extract_url(jump_url)
+
+    xhs_id = matched.group(1)
+    # 解析URL参数
+    parsed_url = urlparse(jump_url)
+    # 解码HTML实体
+    decoded_query = html.unescape(parsed_url.query)
+    params = parse_qs(decoded_query)
+
+    # 提取xsec_source和xsec_token
+    xsec_source = params.get("xsec_source", [None])[0] or "pc_feed"
+    xsec_token = params.get("xsec_token", [None])[0]
+
+    # 构造完整URL
+    if xsec_token:
+        return f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}&xsec_token={xsec_token}"
+
+    return f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}"
+
+
+async def download_images(pic_urls: list) -> list:
+    """下载图片并返回图片段列表"""
+    image_segments = []
+    for pic_url in pic_urls:
+        try:
+            async with AsyncClient() as client:
+                response = await client.get(pic_url, timeout=30.0)
+                response.raise_for_status()
+
+                image_data = BytesIO(response.content)
+                image_segment = MessageSegment.image(image_data)
+                image_segments.append(image_segment)
+        except Exception as e:
+            logger.warning(f"下载图片失败: {e}")
+            continue
+    return image_segments
+
+
+async def send_forward_message(bot: Bot, event: MessageEvent, forward_nodes: list):
+    """发送合并转发消息"""
+    if isinstance(event, GroupMessageEvent):
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=event.group_id,
+            messages=forward_nodes,
+        )
+    else:
+        await bot.call_api(
+            "send_private_forward_msg",
+            user_id=event.user_id,
+            messages=forward_nodes,
+        )
+
+
+async def create_forward_nodes(
+    bot: Bot, info_text: str, media_segments: list[MessageSegment] | None = None
+) -> list[dict]:
+    """创建合并转发消息节点"""
+    forward_nodes = []
+
+    # 添加文字内容节点
+    text_node = {
+        "type": "node",
+        "data": {"name": "", "uin": bot.self_id, "content": info_text},
+    }
+    forward_nodes.append(text_node)
+
+    # 添加媒体内容节点
+    if media_segments:
+        for media_seg in media_segments:
+            node = {
+                "type": "node",
+                "data": {"name": "", "uin": bot.self_id, "content": media_seg},
+            }
+            forward_nodes.append(node)
+
+    return forward_nodes
+
+
 @xiaohongshu_matcher.handle()
 async def handle_xiaohongshu_message(bot: Bot, event: MessageEvent):
     """处理小红书消息"""
     message = str(event.message).strip()
-    url = ""
 
-    # 先尝试从卡片消息中提取URL（需要配置cookie）
-    if "CQ:json" in message and config.xiaohongshu_cookie:
-        try:
-            json_str = re.search(r"\[CQ:json,data=(.*?)\]", message)
-            if json_str:
-                json_data = json.loads(unquote(json_str.group(1).replace("&#44;", ",")))
-                if "meta" in json_data and "news" in json_data["meta"]:
-                    news = json_data["meta"]["news"]
-                    jump_url = news.get("jumpUrl", "")
-                    if "xiaohongshu.com" in jump_url or "xhslink.com" in jump_url:
-                        # 清理URL，移除多余的参数
-                        url = await xiaohongshu.extract_url(jump_url)
-        except Exception as e:
-            logger.debug(f"从卡片消息提取小红书链接失败: {e}")
-    elif "CQ:json" in message and not config.xiaohongshu_cookie:
-        logger.debug("检测到小红书卡片消息，但未配置cookie，跳过卡片解析")
+    # 先尝试从卡片消息中提取URL
+    url = await extract_url_from_card_message(message)
 
-    # 如果卡片消息中没有找到，再从普通文本中提取
     if not url:
         url = await xiaohongshu.extract_url(message)
 
@@ -207,72 +318,30 @@ async def handle_xiaohongshu_message(bot: Bot, event: MessageEvent):
             return
 
         info_text = f"{note_info['title']}\n作者: {note_info['author']}"
-        await xiaohongshu_matcher.send(info_text)
 
         if note_info["pic_urls"]:
+            # 处理图片内容
             pic_urls = note_info["pic_urls"][:9]  # 最多处理9张图片
+            logger.info(f"图片数量{len(pic_urls)}张，合并转发所有图片")
 
-            if len(pic_urls) >= 3:
-                # 图片数量>=3张，合并转发所有图片
-                logger.info(f"图片数量{len(pic_urls)}张，合并转发所有图片")
-                image_segments = []
-                for pic_url in pic_urls:
-                    async with AsyncClient() as client:
-                        response = await client.get(pic_url, timeout=30.0)
-                        response.raise_for_status()
+            image_segments = await download_images(pic_urls)
+            forward_nodes = await create_forward_nodes(bot, info_text, image_segments)
+            await send_forward_message(bot, event, forward_nodes)
 
-                        image_data = BytesIO(response.content)
-                        image_segment = MessageSegment.image(image_data)
-                        image_segments.append(image_segment)
-
-                if image_segments:
-                    # 合并转发所有图片
-                    # 构造合并转发消息节点
-                    forward_nodes = []
-                    for _, img_seg in enumerate(image_segments):
-                        node = {
-                            "type": "node",
-                            "data": {"name": "小红书图片", "uin": bot.self_id, "content": img_seg},
-                        }
-                        forward_nodes.append(node)
-
-                    # 发送合并转发消息
-                    if isinstance(event, GroupMessageEvent):
-                        await bot.call_api(
-                            "send_group_forward_msg",
-                            group_id=event.group_id,
-                            messages=forward_nodes,
-                        )
-                    else:
-                        await bot.call_api(
-                            "send_private_forward_msg",
-                            user_id=event.user_id,
-                            messages=forward_nodes,
-                        )
-            else:
-                # 图片数量<3张，直接发送
-                for pic_url in pic_urls:
-                    try:
-                        async with AsyncClient() as client:
-                            response = await client.get(pic_url, timeout=30.0)
-                            response.raise_for_status()
-
-                            image_data = BytesIO(response.content)
-                            image_segment = MessageSegment.image(image_data)
-                            await xiaohongshu_matcher.send(image_segment)
-                    except Exception as e:
-                        logger.warning(f"下载图片失败: {e}")
-                        continue
-
-        # 处理视频
         elif note_info["video_url"]:
+            # 处理视频内容
             async with AsyncClient() as client:
                 response = await client.get(note_info["video_url"], timeout=60.0)
                 video_data = BytesIO(response.content)
                 video_segment = MessageSegment.video(video_data)
-                await xiaohongshu_matcher.send(video_segment)
+
+            forward_nodes = await create_forward_nodes(bot, info_text, [video_segment])
+            await send_forward_message(bot, event, forward_nodes)
+
         else:
-            await xiaohongshu_matcher.finish("该笔记没有可下载的媒体内容")
+            # 处理纯文字内容
+            forward_nodes = await create_forward_nodes(bot, info_text)
+            await send_forward_message(bot, event, forward_nodes)
 
     except MatcherException:
         raise
