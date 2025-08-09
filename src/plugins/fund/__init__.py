@@ -7,6 +7,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from nonebot import logger, on_regex
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
+from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
 
 __plugin_meta__ = PluginMetadata(
@@ -271,6 +272,8 @@ async def handle_fund_query(bot: Bot, event: Event):
             chart_data = generate_return_chart(fund_data)
             combined_message = message + MessageSegment.image(chart_data)
             await bot.send(event, combined_message)
+        except MatcherException:
+            raise
         except Exception as e:
             logger.error(f"发送基金信息失败: {e}")
             # 如果图表生成失败，至少发送文本信息

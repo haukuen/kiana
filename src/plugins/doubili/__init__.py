@@ -6,6 +6,7 @@ from urllib.parse import unquote
 from httpx import AsyncClient
 from nonebot import get_plugin_config, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, MessageSegment
+from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
@@ -77,6 +78,8 @@ async def handle_bilibili_message(bot: Bot, event: MessageEvent):
                 video_response.raise_for_status()
                 video_bytes = BytesIO(video_response.content)
             await bot.send(event, MessageSegment.video(video_bytes))
+    except MatcherException:
+        raise
     except Exception as e:
         logger.error(f"获取视频失败: {e}")
         await bot.send(event, "获取视频失败，请稍后再试！")
@@ -152,6 +155,8 @@ async def handle_douyin_message(bot: Bot, event: MessageEvent):
             video_segment = MessageSegment.video(video_data)
             await douyin_matcher.finish(video_segment)
 
+    except MatcherException:
+        raise
     except Exception as e:
         logger.error(f"处理抖音视频失败: {e}")
         await douyin_matcher.finish(f"处理视频失败: {e}")
@@ -269,6 +274,8 @@ async def handle_xiaohongshu_message(bot: Bot, event: MessageEvent):
         else:
             await xiaohongshu_matcher.finish("该笔记没有可下载的媒体内容")
 
+    except MatcherException:
+        raise
     except Exception as e:
         logger.error(f"处理小红书笔记失败: {e}")
         await xiaohongshu_matcher.finish(f"处理笔记失败: {e}")
