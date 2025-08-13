@@ -10,6 +10,8 @@ from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
 
+from .fund_parser import FundInfo, parse_fund_js
+
 __plugin_meta__ = PluginMetadata(
     name="fund",
     description="基金查询插件",
@@ -19,63 +21,38 @@ __plugin_meta__ = PluginMetadata(
 fund_query = on_regex(r"^\d{6}$")
 
 
-class FundData:
-    """基金数据类"""
+def _convert_fund_info_to_data(fund_info: FundInfo, fund_code: str) -> dict:
+    """将FundInfo对象转换为兼容的数据格式
 
-    def __init__(self):
-        self.name: str = ""
-        self.code: str = ""
-        self.net_worth_trend: list[dict] = []
-        self.syl_1y: str = ""  # 近一月收益率
-        self.syl_3y: str = ""  # 近三月收益率
-        self.syl_6y: str = ""  # 近六月收益率
-        self.syl_1n: str = ""  # 近一年收益率
-        self.current_net_worth: float = 0.0  # 当前净值
-        self.return_data: list[dict] = []  # 收益率走势数据
+    Args:
+        fund_info: 解析后的基金信息
+        fund_code: 基金代码
 
-
-def _parse_fund_data(content: str, fund_code: str) -> FundData | None:
-    """从获取的js脚本内容中解析基金数据"""
-    fund_data = FundData()
-    fund_data.code = fund_code
-
-    # 解析基金名称
-    name_match = re.search(r'var fS_name = "([^"]+)";', content)
-    if name_match:
-        fund_data.name = name_match.group(1)
-    else:
-        # 如果没有名称，后续解析无意义
-        logger.warning(f"解析基金 {fund_code} 名称失败")
-        return None
-
-    # 解析收益率数据
-    patterns = {
-        "syl_1y": r'var syl_1y="([^"]*)";',
-        "syl_3y": r'var syl_3y="([^"]*)";',
-        "syl_6y": r'var syl_6y="([^"]*)";',
-        "syl_1n": r'var syl_1n="([^"]*)";',
-    }
-    for attr, pattern in patterns.items():
-        match = re.search(pattern, content)
-        if match and match.group(1):
-            setattr(fund_data, attr, match.group(1))
-
-    # 解析收益率走势数据
-    return_pattern = r"var Data_grandTotal = (\[.*?\]);"
-    return_match = re.search(return_pattern, content, re.DOTALL)
-    if return_match:
+    Returns:
+        包含基金数据的字典
+    """
+    # 计算当前净值
+    current_net_worth = 0.0
+    if fund_info.net_worth_trend and len(fund_info.net_worth_trend) > 0:
         try:
-            import json
+            current_net_worth = float(fund_info.net_worth_trend[-1][1])
+        except (IndexError, ValueError, TypeError):
+            logger.warning(f"解析基金 {fund_code} 当前净值失败")
 
-            return_data_str = return_match.group(1)
-            fund_data.return_data = json.loads(return_data_str) if return_data_str else []
-        except json.JSONDecodeError:
-            logger.warning(f"解析基金 {fund_code} 收益率数据失败")
+    return {
+        'name': fund_info.name or "",
+        'code': fund_code,
+        'net_worth_trend': fund_info.net_worth_trend or [],
+        'syl_1y': fund_info.syl_1y or "",  # 近一月收益率
+        'syl_3y': fund_info.syl_3y or "",  # 近三月收益率
+        'syl_6y': fund_info.syl_6y or "",  # 近六月收益率
+        'syl_1n': fund_info.syl_1n or "",  # 近一年收益率
+        'current_net_worth': current_net_worth,
+        'return_data': fund_info.return_data or []  # 收益率走势数据
+    }
 
-    return fund_data
 
-
-async def fetch_fund_data(fund_code: str) -> FundData | None:
+async def fetch_fund_data(fund_code: str) -> dict | None:
     """
     获取基金数据
 
@@ -83,17 +60,22 @@ async def fetch_fund_data(fund_code: str) -> FundData | None:
         fund_code: 基金代码
 
     Returns:
-        基金数据对象，如果获取失败返回None
+        基金数据字典，如果获取失败返回None
     """
     url = f"http://fund.eastmoney.com/pingzhongdata/{fund_code}.js"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
             response.raise_for_status()
             content = response.text
 
-        fund_data = _parse_fund_data(content, fund_code)
-        if fund_data:
+        # 使用fund_parser解析数据
+        fund_info = parse_fund_js(content)
+        if fund_info and fund_info.name:
+            fund_data = _convert_fund_info_to_data(fund_info, fund_code)
             logger.info(f"成功获取基金 {fund_code} 的数据")
             return fund_data
 
@@ -111,11 +93,11 @@ async def fetch_fund_data(fund_code: str) -> FundData | None:
         return None
 
 
-def format_fund_message(fund_data: FundData) -> str:
+def format_fund_message(fund_data: dict) -> str:
     """格式化基金信息消息
 
     Args:
-        fund_data: 基金数据
+        fund_data: 基金数据字典
 
     Returns:
         格式化的消息字符串
@@ -123,27 +105,27 @@ def format_fund_message(fund_data: FundData) -> str:
     message_parts = []
 
     # 基金名称和代码
-    message_parts.append(f"📈 {fund_data.name}")
-    message_parts.append(f"代码: {fund_data.code}")
+    message_parts.append(f"📈 {fund_data['name']}")
+    message_parts.append(f"代码: {fund_data['code']}")
 
     # 当前净值
-    if fund_data.current_net_worth:
-        message_parts.append(f"当前净值: {fund_data.current_net_worth:.4f}")
+    if fund_data['current_net_worth']:
+        message_parts.append(f"当前净值: {fund_data['current_net_worth']:.4f}")
 
     # 收益率信息
-    if fund_data.syl_1y:
-        message_parts.append(f"近1月: {fund_data.syl_1y}%")
-    if fund_data.syl_3y:
-        message_parts.append(f"近3月: {fund_data.syl_3y}%")
-    if fund_data.syl_6y:
-        message_parts.append(f"近6月: {fund_data.syl_6y}%")
-    if fund_data.syl_1n:
-        message_parts.append(f"近1年: {fund_data.syl_1n}%")
+    if fund_data['syl_1y']:
+        message_parts.append(f"近1月: {fund_data['syl_1y']}%")
+    if fund_data['syl_3y']:
+        message_parts.append(f"近3月: {fund_data['syl_3y']}%")
+    if fund_data['syl_6y']:
+        message_parts.append(f"近6月: {fund_data['syl_6y']}%")
+    if fund_data['syl_1n']:
+        message_parts.append(f"近1年: {fund_data['syl_1n']}%")
 
     return "\n".join(message_parts)
 
 
-def generate_return_chart(fund_data: FundData) -> bytes:
+def generate_return_chart(fund_data: dict) -> bytes:
     """
     生成基金收益率走势图
 
@@ -168,7 +150,7 @@ def generate_return_chart(fund_data: FundData) -> bytes:
     plt.style.use("bmh")
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    return_data = fund_data.return_data
+    return_data = fund_data['return_data']
 
     if not return_data:
         ax.text(
@@ -216,8 +198,8 @@ def generate_return_chart(fund_data: FundData) -> bytes:
                     legend_handles.append(line)
 
         # 设置图表标题和标签
-        fund_name = fund_data.name or "基金"
-        fund_code = fund_data.code or ""
+        fund_name = fund_data['name'] or "基金"
+        fund_code = fund_data['code'] or ""
         ax.set_title(
             f"{fund_name}({fund_code})", fontsize=14, fontweight="bold", fontproperties=font_prop
         )
