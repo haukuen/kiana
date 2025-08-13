@@ -65,7 +65,7 @@ def update_pyproject_version(new_version):
     print(f"新版本: {new_version}")
 
     # 替换版本号
-    new_content = re.sub(version_pattern, f"\\1{new_version}\\3", content)
+    new_content = re.sub(r'version\s*=\s*"[^"]+"', f'version = "{new_version}"', content)
 
     # 写回文件
     pyproject_path.write_text(new_content, encoding="utf-8")
