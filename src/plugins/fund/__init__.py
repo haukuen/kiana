@@ -9,7 +9,7 @@ from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
 
-from .fund_parser import FundInfo, parse_fund_js
+from .fund_parser import FundInfo, get_recent_daily_returns, parse_fund_js
 
 __plugin_meta__ = PluginMetadata(
     name="fund",
@@ -57,6 +57,33 @@ async def fetch_fund_data(fund_code: str) -> FundInfo | None:
         return None
 
 
+def _format_daily_return(return_info: dict) -> str:
+    """格式化单日涨跌幅信息
+
+    Args:
+        return_info: 包含日期和涨跌幅的字典
+
+    Returns:
+        格式化的单日涨跌幅字符串
+    """
+    timestamp = return_info["date"]
+    try:
+        if isinstance(timestamp, str) and timestamp.isdigit():
+            timestamp = int(timestamp)
+
+        if isinstance(timestamp, int | float):
+            date_obj = datetime.fromtimestamp(timestamp / 1000)
+            date_str = date_obj.strftime("%Y-%m-%d")
+        else:
+            date_str = str(timestamp)
+    except (ValueError, OSError):
+        date_str = str(timestamp)
+
+    equity_return = return_info["equity_return"]
+    return_str = f"+{equity_return}%" if equity_return > 0 else f"{equity_return}%"
+    return f"{date_str}: {return_str}"
+
+
 def format_fund_message(fund_data: FundInfo) -> str:
     """格式化基金信息消息
 
@@ -71,6 +98,13 @@ def format_fund_message(fund_data: FundInfo) -> str:
     # 基金名称和代码
     message_parts.append(f"📈 {fund_data.name}")
     message_parts.append(f"代码: {fund_data.code}")
+
+    # 添加最近三日涨跌幅
+    if fund_data.net_worth_trend:
+        recent_returns = get_recent_daily_returns(fund_data.net_worth_trend, days=3)
+        if recent_returns:
+            for return_info in recent_returns:
+                message_parts.append(_format_daily_return(return_info))
 
     # 收益率信息
     if fund_data.syl_1y:
