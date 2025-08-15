@@ -17,10 +17,10 @@ class FundInfo:
     bond_codes: str | None = None  # 基金持仓债券代码
     stock_codes_new: list[str] | None = None  # 基金持仓股票代码（新市场号）
     bond_codes_new: str | None = None  # 基金持仓债券代码（新市场号）
-    syl_1n: str | None = None  # 近一月收益率
-    syl_6y: str | None = None  # 近三月收益率
-    syl_3y: str | None = None  # 近六月收益率
-    syl_1y: str | None = None  # 近一年收益率
+    syl_1y: str | None = None  # 近一月收益率
+    syl_3y: str | None = None  # 近三月收益率
+    syl_6y: str | None = None  # 近六月收益率
+    syl_1n: str | None = None  # 近一年收益率
     fund_shares_positions: list[tuple[int, float]] | None = None  # 股票仓位测算图
     net_worth_trend: list[dict[str, Any]] | None = None
     return_data: list[dict[str, Any]] | None = None  # 收益率走势数据
