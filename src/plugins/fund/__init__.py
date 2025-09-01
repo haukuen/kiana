@@ -1,259 +1,231 @@
 import io
 from datetime import datetime, timedelta
 
+import akshare as ak
 import httpx
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from nonebot import logger, on_regex
-from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, Event, GroupMessageEvent, MessageEvent, MessageSegment
 from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
-
-from .fund_parser import FundInfo, get_recent_daily_returns, parse_fund_js
 
 __plugin_meta__ = PluginMetadata(
     name="fund",
     description="基金查询插件",
-    usage="发送基金代码查询基金信息，如：016057",
+    usage="发送基金代码查询基金信息，如：018957",
 )
 
 fund_query = on_regex(r"^\d{6}$")
 
 
-async def fetch_fund_data(fund_code: str) -> FundInfo | None:
-    """
-    获取基金数据
-
-    Args:
-        fund_code: 基金代码
-
-    Returns:
-        基金数据对象，如果获取失败返回None
-    """
-    url = f"http://fund.eastmoney.com/pingzhongdata/{fund_code}.js"
+async def get_fund_data(fund_code: str) -> dict:
+    """获取基金数据，包括基本信息、业绩和净值信息"""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            content = response.text
+        # 获取基金基本信息
+        basic_info_df = ak.fund_individual_basic_info_xq(symbol=fund_code)
 
-        fund_data = parse_fund_js(content)
-        if fund_data and fund_data.name:
-            fund_data.code = fund_code
-            logger.info(f"成功获取基金 {fund_code} 的数据")
-            return fund_data
+        # 获取基金业绩数据
+        achievement_df = ak.fund_individual_achievement_xq(symbol=fund_code)
 
-        logger.warning(f"解析基金 {fund_code} 数据失败")
-        return None
+        # 获取基金净值数据
+        nav_df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
 
-    except httpx.TimeoutException:
-        logger.error(f"获取基金 {fund_code} 数据超时")
-        return None
-    except httpx.HTTPStatusError as e:
-        logger.error(f"获取基金 {fund_code} 数据失败，状态码: {e.response.status_code}")
-        return None
+        return {
+            "basic_info": basic_info_df,
+            "achievement": achievement_df,
+            "nav": nav_df,
+            "success": True,
+        }
     except Exception as e:
-        logger.error(f"获取基金 {fund_code} 数据时发生错误: {e}")
-        return None
+        logger.error(f"获取基金数据失败: {e}")
+        return {"success": False, "error": str(e)}
 
 
-def _format_daily_return(return_info: dict) -> str:
-    """格式化单日涨跌幅信息
-
-    Args:
-        return_info: 包含日期和涨跌幅的字典
-
-    Returns:
-        格式化的单日涨跌幅字符串
-    """
-    timestamp = return_info["date"]
+async def get_fund_holdings(fund_code: str) -> dict:
+    """获取基金十大重仓股信息"""
     try:
-        if isinstance(timestamp, str) and timestamp.isdigit():
-            timestamp = int(timestamp)
+        from datetime import datetime
 
-        if isinstance(timestamp, int | float):
-            date_obj = datetime.fromtimestamp(timestamp / 1000)
-            date_str = date_obj.strftime("%Y-%m-%d")
+        current_year = datetime.now().year
+
+        # 获取基金持仓数据
+        holdings_df = ak.fund_portfolio_hold_em(symbol=fund_code, date=str(current_year))
+
+        return {
+            "holdings": holdings_df,
+            "success": True,
+        }
+    except Exception as e:
+        logger.error(f"获取基金持仓数据失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def format_fund_info(fund_code: str, fund_data: dict) -> str:
+    """格式化基金信息文本"""
+    try:
+        basic_info_df = fund_data["basic_info"]
+        achievement_df = fund_data["achievement"]
+        nav_df = fund_data["nav"]
+
+        # 从基本信息中获取基金名称
+        fund_name_row = basic_info_df[basic_info_df["item"] == "基金名称"]
+        if not fund_name_row.empty:
+            fund_name = fund_name_row.iloc[0]["value"]
         else:
-            date_str = str(timestamp)
-    except (ValueError, OSError):
-        date_str = str(timestamp)
+            fund_name = f"基金 {fund_code}"
 
-    equity_return = return_info["equity_return"]
-    return_str = f"+{equity_return}%" if equity_return > 0 else f"{equity_return}%"
-    return f"{date_str}: {return_str}"
+        # 获取最近7个交易日的数据
+        recent_nav = nav_df.tail(7).iloc[::-1]
+
+        # 构建信息文本
+        info_lines = []
+        info_lines.append(fund_name)
+        info_lines.append(f"代码: {fund_code}")
+        info_lines.append("")
+
+        # 添加最近7个交易日的收益率
+        info_lines.append("最近交易日收益:")
+        for _, row in recent_nav.iterrows():
+            date_str = row["净值日期"]
+            daily_return = float(row["日增长率"])
+            if daily_return > 0:
+                info_lines.append(f"{date_str}: +{daily_return:.2f}%")
+            else:
+                info_lines.append(f"{date_str}: {daily_return:.2f}%")
+
+        info_lines.append("")
+
+        # 添加阶段收益数据
+        info_lines.append("阶段收益:")
+        stage_periods = ["近1月", "近3月", "近6月", "近1年", "近3年", "近5年"]
+
+        for period in stage_periods:
+            try:
+                period_data = achievement_df[achievement_df["周期"] == period]
+                if not period_data.empty:
+                    return_rate = float(period_data.iloc[0]["本产品区间收益"])
+                    info_lines.append(f"{period}: {return_rate:.2f}%")
+            except (KeyError, ValueError, IndexError) as e:
+                # 如果某个周期的数据不存在或格式错误，跳过该周期
+                logger.debug(f"跳过周期 {period} 的数据: {e}")
+                continue
+
+        return "\n".join(info_lines)
+
+    except Exception as e:
+        logger.error(f"格式化基金信息失败: {e}")
+        return f"基金 {fund_code}\n数据格式化失败: {e!s}"
 
 
-def format_fund_message(fund_data: FundInfo) -> str:
-    """格式化基金信息消息
+async def format_fund_holdings(fund_code: str, holdings_data: dict) -> str:
+    """格式化基金十大重仓股信息"""
+    try:
+        holdings_df = holdings_data["holdings"]
 
-    Args:
-        fund_data: 基金数据
+        if holdings_df.empty:
+            return f"基金 {fund_code}\n暂无持仓数据"
 
-    Returns:
-        格式化的消息字符串
-    """
-    message_parts = []
+        # 获取最新季度的数据
+        # 找到所有不同的季度，并选择最新的一个
+        unique_quarters = holdings_df["季度"].unique()
+        # 按季度排序，取最新的（假设季度格式为"2025年X季度股票投资明细"）
+        latest_quarter = sorted(unique_quarters, reverse=True)[0]
+        latest_holdings = holdings_df[holdings_df["季度"] == latest_quarter].head(10)
 
-    # 基金名称和代码
-    message_parts.append(f"📈 {fund_data.name}")
-    message_parts.append(f"代码: {fund_data.code}")
+        info_lines = []
+        info_lines.append(f"十大重仓股 ({latest_quarter})")
+        info_lines.append("")
 
-    # 添加最近三日涨跌幅
-    if fund_data.net_worth_trend:
-        recent_returns = get_recent_daily_returns(fund_data.net_worth_trend, days=3)
-        if recent_returns:
-            for return_info in recent_returns:
-                message_parts.append(_format_daily_return(return_info))
+        for idx, (_, row) in enumerate(latest_holdings.iterrows(), 1):
+            stock_code = row["股票代码"]
+            stock_name = row["股票名称"]
+            ratio = float(row["占净值比例"])
+            info_lines.append(f"{idx}. {stock_name}({stock_code}) {ratio:.2f}%")
 
-    # 收益率信息
-    if fund_data.syl_1y:
-        message_parts.append(f"近1月: {fund_data.syl_1y}%")
-    if fund_data.syl_3y:
-        message_parts.append(f"近3月: {fund_data.syl_3y}%")
-    if fund_data.syl_6y:
-        message_parts.append(f"近6月: {fund_data.syl_6y}%")
-    if fund_data.syl_1n:
-        message_parts.append(f"近1年: {fund_data.syl_1n}%")
+        return "\n".join(info_lines)
 
-    return "\n".join(message_parts)
+    except Exception as e:
+        logger.error(f"格式化基金持仓信息失败: {e}")
+        return f"基金 {fund_code}\n持仓数据格式化失败: {e!s}"
 
 
-def generate_return_chart(fund_data: FundInfo) -> bytes:
-    """
-    生成基金收益率走势图
+async def create_forward_nodes(
+    bot: Bot,
+    info_text: str,
+    holdings_text: str | None = None,
+    media_segments: list[MessageSegment] | None = None,
+) -> list[dict]:
+    """创建合并转发消息节点"""
+    forward_nodes = []
 
-    Args:
-        fund_data: 基金数据字典，包含收益率历史数据
+    # 第一个节点：基金基本信息
+    text_node = {
+        "type": "node",
+        "data": {"name": "", "uin": bot.self_id, "content": info_text},
+    }
+    forward_nodes.append(text_node)
 
-    Returns:
-        bytes: PNG格式的图表数据
-    """
-    import pathlib
+    # 第二个节点：十大重仓股信息
+    if holdings_text:
+        holdings_node = {
+            "type": "node",
+            "data": {"name": "", "uin": bot.self_id, "content": holdings_text},
+        }
+        forward_nodes.append(holdings_node)
 
-    import matplotlib.font_manager as fm
+    return forward_nodes
 
-    font_path = str(
-        pathlib.Path(__file__).resolve().parent.parent.parent.parent
-        / "fonts"
-        / "SourceHanSansSC-Regular.ttf"
-    )
-    font_prop = fm.FontProperties(fname=font_path)
-    plt.rcParams["axes.unicode_minus"] = False
 
-    plt.style.use("bmh")
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    return_data = fund_data.return_data
-
-    if not return_data:
-        ax.text(
-            0.5,
-            0.5,
-            "暂无收益率数据",
-            ha="center",
-            va="center",
-            transform=ax.transAxes,
-            fontsize=16,
-            fontproperties=font_prop,
+async def send_forward_message(bot: Bot, event: MessageEvent, forward_nodes: list):
+    """发送合并转发消息"""
+    if isinstance(event, GroupMessageEvent):
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=event.group_id,
+            messages=forward_nodes,
         )
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
     else:
-        # 过滤最近12个月的数据
-        # 虽然好像给的数据最多只有6个月，以防万一
-        twelve_months_ago = datetime.now() - timedelta(days=365)
-
-        # 绘制每个系列的数据
-        colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
-        legend_handles = []
-        for i, series in enumerate(return_data):
-            name = series.get("name", f"系列{i + 1}")
-            data_points = series.get("data", [])
-
-            if data_points:
-                recent_data = []
-                for point in data_points:
-                    timestamp = point[0] / 1000  # 转换为秒
-                    date = datetime.fromtimestamp(timestamp)
-                    if date >= twelve_months_ago:
-                        recent_data.append((date, point[1]))
-
-                if recent_data:
-                    dates, values = zip(*recent_data, strict=True)
-                    (line,) = ax.plot(
-                        dates,
-                        values,
-                        linewidth=2,
-                        color=colors[i % len(colors)],
-                        label=name,
-                        alpha=0.8,
-                    )
-                    legend_handles.append(line)
-
-        # 设置图表标题和标签
-        fund_name = fund_data.name or "基金"
-        fund_code = fund_data.code or ""
-        ax.set_title(
-            f"{fund_name}({fund_code})", fontsize=14, fontweight="bold", fontproperties=font_prop
+        await bot.call_api(
+            "send_private_forward_msg",
+            user_id=event.user_id,
+            messages=forward_nodes,
         )
-        ax.set_xlabel("日期", fontsize=12, fontproperties=font_prop)
-        ax.set_ylabel("收益率 (%)", fontsize=12, fontproperties=font_prop)
-
-        # 格式化x轴日期显示
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-
-        # 设置网格和图例
-        ax.grid(True, alpha=0.3)
-        ax.legend(handles=legend_handles, loc="upper left", fontsize=10, prop=font_prop)
-
-        # 设置日期标签为水平
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=0, ha="center")
-
-        # 添加零线
-        ax.axhline(y=0, color="black", linestyle="-", alpha=0.3, linewidth=0.8)
-
-    # 调整布局
-    plt.tight_layout()
-
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format="png", dpi=300, bbox_inches="tight")
-    img_buffer.seek(0)
-    img_data = img_buffer.getvalue()
-    plt.close(fig)
-
-    return img_data
 
 
 @fund_query.handle()
-async def handle_fund_query(bot: Bot, event: Event):
-    """
-    处理基金查询请求
+async def handle_fund_query(bot: Bot, event: MessageEvent):
+    """处理基金查询请求"""
+    fund_code = str(event.message).strip()
 
-    Args:
-        bot: Bot实例
-        event: 事件对象
-    """
-    import re
+    try:
+        # 获取基金数据
+        fund_data = await get_fund_data(fund_code)
 
-    fund_code = str(event.get_message()).strip()
+        if not fund_data["success"]:
+            await fund_query.finish(f"获取基金数据失败: {fund_data['error']}")
+            return
 
-    if not re.match(r"^\d{6}$", fund_code):
-        return
+        # 格式化基金信息
+        info_text = await format_fund_info(fund_code, fund_data)
 
-    fund_data = await fetch_fund_data(fund_code)
+        # 获取基金持仓数据
+        holdings_data = await get_fund_holdings(fund_code)
+        holdings_text = None
 
-    if fund_data:
-        try:
-            message = format_fund_message(fund_data)
-            chart_data = generate_return_chart(fund_data)
-            combined_message = message + MessageSegment.image(chart_data)
-            await bot.send(event, combined_message)
-        except MatcherException:
-            raise
-        except Exception as e:
-            logger.error(f"发送基金信息失败: {e}")
-            # 如果图表生成失败，至少发送文本信息
-            message = format_fund_message(fund_data)
-            await fund_query.finish(message)
+        if holdings_data["success"]:
+            holdings_text = await format_fund_holdings(fund_code, holdings_data)
+        else:
+            logger.warning(f"获取基金持仓数据失败: {holdings_data.get('error', '未知错误')}")
+
+        # 创建合并转发消息节点
+        forward_nodes = await create_forward_nodes(bot, info_text, holdings_text)
+
+        # 发送合并转发消息
+        await send_forward_message(bot, event, forward_nodes)
+
+    except MatcherException:
+        raise
+    except Exception as e:
+        logger.error(f"处理基金查询失败: {e}")
+        await fund_query.finish(f"查询基金信息失败: {e!s}")
