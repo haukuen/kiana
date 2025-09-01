@@ -1,6 +1,6 @@
 [project]
 name = "kiana"
-version = "0.4.5"
+version = "0.5.0"
 description = "kiana"
 readme = "README.md"
 requires-python = ">=3.13, <3.14"

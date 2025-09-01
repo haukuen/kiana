@@ -498,7 +498,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/cf/a1/693351acd0a9edca4
 
 [[package]]
 name = "kiana"
-version = "0.4.5"
+version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "akshare" },
