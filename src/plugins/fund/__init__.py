@@ -1,10 +1,4 @@
-import io
-from datetime import datetime, timedelta
-
 import akshare as ak
-import httpx
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
 from nonebot import logger, on_regex
 from nonebot.adapters.onebot.v11 import Bot, Event, GroupMessageEvent, MessageEvent, MessageSegment
 from nonebot.exception import MatcherException
@@ -25,11 +19,18 @@ async def get_fund_data(fund_code: str) -> dict:
         # 获取基金基本信息
         basic_info_df = ak.fund_individual_basic_info_xq(symbol=fund_code)
 
+        if basic_info_df.empty or len(basic_info_df) == 0:
+            return {"success": False}
+
         # 获取基金业绩数据
         achievement_df = ak.fund_individual_achievement_xq(symbol=fund_code)
 
         # 获取基金净值数据
         nav_df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+
+        # 检查净值数据是否有效
+        if nav_df.empty or len(nav_df) == 0:
+            return {"success": False}
 
         return {
             "basic_info": basic_info_df,
@@ -37,9 +38,8 @@ async def get_fund_data(fund_code: str) -> dict:
             "nav": nav_df,
             "success": True,
         }
-    except Exception as e:
-        logger.error(f"获取基金数据失败: {e}")
-        return {"success": False, "error": str(e)}
+    except Exception:
+        return {"success": False}
 
 
 async def get_fund_holdings(fund_code: str) -> dict:
@@ -203,7 +203,6 @@ async def handle_fund_query(bot: Bot, event: MessageEvent):
         fund_data = await get_fund_data(fund_code)
 
         if not fund_data["success"]:
-            await fund_query.finish(f"获取基金数据失败: {fund_data['error']}")
             return
 
         # 格式化基金信息
@@ -226,6 +225,5 @@ async def handle_fund_query(bot: Bot, event: MessageEvent):
 
     except MatcherException:
         raise
-    except Exception as e:
-        logger.error(f"处理基金查询失败: {e}")
-        await fund_query.finish(f"查询基金信息失败: {e!s}")
+    except Exception:
+        return
