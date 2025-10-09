@@ -31,7 +31,7 @@ ANDROID_HEADER = {
 # 匹配抖音链接的模式
 PATTERNS = {
     "douyin": re.compile(
-        r"https?://(?:v\.douyin\.com/[A-Za-z\d]+|www\.douyin\.com/(?:video|note)/\d+)"
+        r"https?://(?:v\.douyin\.com/[A-Za-z\d_-]+|www\.douyin\.com/(?:video|note)/\d+)"
     ),
 }
 
