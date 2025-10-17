@@ -1,0 +1,48 @@
+name: Trigger Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "新版本号 (格式: x.y.z)"
+        required: true
+        type: string
+
+jobs:
+  run-release:
+    name: Run release script
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run release script
+        env:
+          UV_PYTHON: python
+        run: |
+          python release.py "${{ inputs.version }}" --skip-git-check
+
+      - name: Push changes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git push origin HEAD
+          git push origin "v${VERSION}"
