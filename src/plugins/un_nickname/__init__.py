@@ -78,8 +78,8 @@ async def is_adding_nickname(event: GroupMessageEvent) -> bool:
 add_nickname_matcher = on_message(rule=is_adding_nickname, priority=5, block=True)
 
 
-# 添加昵称验证正则表达式
 VALID_NICKNAME_PATTERN = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9]+$")
+AT_NICKNAME_PATTERN = re.compile(r"\bat\s*([\u4e00-\u9fa5a-zA-Z0-9]+)(?=\s|$)")
 
 
 # 昵称验证函数
@@ -212,7 +212,7 @@ async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent):
         parts = []
         last_pos = 0
 
-        for match in re.finditer(r"\bat(\S+)", text):
+        for match in AT_NICKNAME_PATTERN.finditer(text):
             start, end = match.span()
             # 添加前面的文本段
             if start > last_pos:
