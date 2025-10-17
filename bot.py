@@ -4,6 +4,7 @@ import nonebot
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
 from nonebot.log import default_filter, default_format, logger_id
+from src.storage import get_db
 
 # 移除 NoneBot 默认的日志处理器
 logger.remove(logger_id)
@@ -46,6 +47,12 @@ driver = nonebot.get_driver()
 driver.register_adapter(ONEBOT_V11Adapter)
 
 nonebot.load_from_toml("pyproject.toml")
+
+
+@driver.on_shutdown
+async def _close_storage():
+    await get_db().close()
+
 
 if __name__ == "__main__":
     nonebot.run()

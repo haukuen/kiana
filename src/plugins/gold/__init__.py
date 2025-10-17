@@ -10,10 +10,9 @@ from nonebot import get_driver, get_plugin_config, logger, on_fullmatch, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.plugin import PluginMetadata
 
-require("nonebot_plugin_localstore")
-import nonebot_plugin_localstore as store  # noqa: E402
+from src.storage import get_db
 
-from .config import Config  # noqa: E402
+from .config import Config
 
 __plugin_meta__ = PluginMetadata(
     name="gold",
@@ -30,60 +29,62 @@ gold_chart = on_fullmatch(("金价走势", "金价趋势", "黄金走势", "黄�
 # 存储冷却时间的字典，每个群单独冷却
 cooldown_dict = {}
 
-price_history: deque[tuple[float, float]] = deque(maxlen=86400)
+PRICE_HISTORY_LIMIT = 86400
+price_history: deque[tuple[float, float]] = deque()
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
-
-PRICE_DATA_FILE = store.get_data_file("gold", "price_history.json")
 driver = get_driver()
 
-# 保存间隔时间
-SAVE_INTERVAL = 300
+db = get_db()
+db.ensure_schema(
+    [
+        """
+        CREATE TABLE IF NOT EXISTS gold_price_history (
+            timestamp REAL PRIMARY KEY,
+            price REAL NOT NULL
+        )
+        """
+    ]
+)
 
 
-class PriceManager:
-    """价格数据管理器"""
+async def load_price_history() -> None:
+    """从数据库加载最近的价格历史"""
+    rows = await db.fetch_all(
+        """
+        SELECT timestamp, price
+        FROM gold_price_history
+        ORDER BY timestamp DESC
+        LIMIT ?
+        """,
+        (PRICE_HISTORY_LIMIT,),
+    )
 
-    def __init__(self):
-        self.last_save_time = 0
+    price_history.clear()
+    for row in reversed(rows):
+        price_history.append((row["timestamp"], row["price"]))
 
-    def should_save(self, current_time: float) -> bool:
-        """检查是否应该保存数据"""
-        return current_time - self.last_save_time >= SAVE_INTERVAL
-
-    def update_save_time(self, current_time: float) -> None:
-        """更新最后保存时间"""
-        self.last_save_time = current_time
-
-
-# 创建价格管理器实例
-price_manager = PriceManager()
-
-
-def save_price_history() -> None:
-    """保存价格历史到文件"""
-    try:
-        PRICE_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with PRICE_DATA_FILE.open("w", encoding="utf-8") as f:
-            # 转换为列表存储
-            data = list(price_history)
-            json.dump(data, f)
-        logger.info(f"已保存 {len(price_history)} 条金价数据")
-    except Exception as e:
-        logger.error(f"保存金价数据失败: {e}")
+    if rows:
+        logger.info(f"已从数据库加载 {len(rows)} 条历史金价数据")
 
 
-def load_price_history() -> None:
-    """从文件加载价格历史"""
-    try:
-        if PRICE_DATA_FILE.exists():
-            with PRICE_DATA_FILE.open(encoding="utf-8") as f:
-                data: list[tuple[float, float]] = json.load(f)
-                price_history.clear()
-                price_history.extend(data)
-            logger.info(f"已加载 {len(data)} 条历史金价数据")
-    except Exception as e:
-        logger.error(f"加载历史金价数据失败: {e}")
+async def persist_price(timestamp: float, price: float) -> None:
+    """写入数据库并维护内存中的价格历史"""
+    if len(price_history) >= PRICE_HISTORY_LIMIT:
+        oldest_timestamp, _ = price_history.popleft()
+        await db.execute(
+            "DELETE FROM gold_price_history WHERE timestamp = ?",
+            (oldest_timestamp,),
+        )
+
+    price_history.append((timestamp, price))
+    await db.execute(
+        """
+        INSERT OR REPLACE INTO gold_price_history (timestamp, price)
+        VALUES (?, ?)
+        """,
+        (timestamp, price),
+    )
 
 
 async def fetch_gold_price() -> float | None:
@@ -100,7 +101,7 @@ async def fetch_gold_price() -> float | None:
         if json_data.get("success"):
             return float(json_data["data"]["FQAMBPRCZ1"]["zBuyPrc"])
         return None
-    except (http.client.HTTPException, json.JSONDecodeError, KeyError, ValueError) as e:
+    except (OSError, http.client.HTTPException, json.JSONDecodeError, KeyError, ValueError) as e:
         logger.error(f"获取金价失败: {e}")
         return None
 
@@ -112,12 +113,7 @@ async def record_price():
 
     price = await fetch_gold_price()
     if price is not None:
-        price_history.append((current_time, price))
-
-        # 每隔 SAVE_INTERVAL 秒保存一次
-        if price_manager.should_save(current_time):
-            save_price_history()
-            price_manager.update_save_time(current_time)
+        await persist_price(current_time, price)
 
 
 def generate_chart() -> bytes:
@@ -192,9 +188,4 @@ async def _(bot: Bot, event: Event):
 
 @driver.on_startup
 async def _():
-    load_price_history()
-
-
-@driver.on_shutdown
-async def _():
-    save_price_history()
+    await load_price_history()
