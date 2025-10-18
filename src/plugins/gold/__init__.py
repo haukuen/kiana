@@ -1,13 +1,15 @@
 import http.client
 import io
 import json
+import re
 import time
 from collections import deque
 from datetime import datetime
 
 import matplotlib.pyplot as plt
-from nonebot import get_driver, get_plugin_config, logger, on_fullmatch, require
+from nonebot import get_driver, get_plugin_config, logger, on_fullmatch, on_regex, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
+from nonebot.params import RegexGroup
 from nonebot.plugin import PluginMetadata
 
 from src.storage import get_db
@@ -24,12 +26,18 @@ __plugin_meta__ = PluginMetadata(
 config = get_plugin_config(Config)
 
 gold = on_fullmatch("金价")
-gold_chart = on_fullmatch(("金价走势", "金价趋势", "黄金走势", "黄金趋势", "金价图", "黄金图"))
+gold_chart = on_regex(
+    r"^(金价走势|金价趋势|黄金走势|黄金趋势|金价图|黄金图)\s*(.*)$",
+    priority=5,
+    block=True,
+)
 
 # 存储冷却时间的字典，每个群单独冷却
 cooldown_dict = {}
 
 PRICE_HISTORY_LIMIT = 86400
+MIN_WINDOW_SECONDS = 60
+CHART_WINDOW_SECONDS = max(MIN_WINDOW_SECONDS, config.chart_window_hours * 3600)
 price_history: deque[tuple[float, float]] = deque()
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
@@ -116,14 +124,22 @@ async def record_price():
         await persist_price(current_time, price)
 
 
-def generate_chart() -> bytes:
+def generate_chart(window_seconds: int | None = None) -> bytes:
     """生成金价走势图"""
     plt.style.use("bmh")
 
     plt.figure(figsize=(12, 6))
     plt.clf()
 
-    times, prices = zip(*list(price_history), strict=False)
+    effective_window = CHART_WINDOW_SECONDS if window_seconds is None else max(
+        MIN_WINDOW_SECONDS, window_seconds
+    )
+    cutoff = time.time() - effective_window
+    window_data = [(t, p) for t, p in price_history if t >= cutoff]
+    if len(window_data) < 2:
+        window_data = list(price_history)
+
+    times, prices = zip(*window_data, strict=False)
     # 转换为本地时间
     times = [datetime.fromtimestamp(t).astimezone() for t in times]
 
@@ -173,14 +189,24 @@ async def _(bot: Bot, event: Event):
 
 
 @gold_chart.handle()
-async def _(bot: Bot, event: Event):
+async def _(bot: Bot, event: Event, matches: tuple[str, str] = RegexGroup()):
     """处理金价走势图请求"""
     if len(price_history) < 2:
         await gold_chart.finish("数据收集中，请稍后再试")
         return
 
+    suffix = matches[1].strip() if len(matches) > 1 else ""
+    custom_window: int | None = None
+
+    if suffix:
+        parsed_window = parse_window_spec(suffix)
+        if parsed_window is None:
+            await gold_chart.finish("我听不懂哦")
+            return
+        custom_window = parsed_window
+
     try:
-        image_data = generate_chart()
+        image_data = generate_chart(custom_window)
         await gold_chart.send(MessageSegment.image(image_data))
     except Exception as e:
         await gold_chart.send(f"生成图表失败: {e!s}")
@@ -189,3 +215,34 @@ async def _(bot: Bot, event: Event):
 @driver.on_startup
 async def _():
     await load_price_history()
+WINDOW_PATTERN = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>分钟|分|min|m|小时|时|h|天|日|d|周|星期|w|月)",
+    re.IGNORECASE,
+)
+
+
+def parse_window_spec(spec: str) -> int | None:
+    match = WINDOW_PATTERN.search(spec)
+    if not match:
+        return None
+
+    value = float(match.group("value"))
+    unit = match.group("unit").lower()
+
+    if unit in {"分钟", "分", "min", "m"}:
+        base = 60
+    elif unit in {"小时", "时", "h"}:
+        base = 3600
+    elif unit in {"天", "日", "d"}:
+        base = 86400
+    elif unit in {"周", "星期", "w"}:
+        base = 7 * 86400
+    elif unit == "月":
+        base = 30 * 86400
+    else:
+        return None
+
+    seconds = int(value * base)
+    if seconds <= 0:
+        return None
+    return max(MIN_WINDOW_SECONDS, seconds)
