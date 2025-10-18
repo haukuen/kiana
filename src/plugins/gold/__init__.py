@@ -35,10 +35,10 @@ gold_chart = on_regex(
 # 存储冷却时间的字典，每个群单独冷却
 cooldown_dict = {}
 
-PRICE_HISTORY_LIMIT = 86400
+PRICE_HISTORY_LIMIT = max(86400, config.price_history_limit)
 MIN_WINDOW_SECONDS = 60
 CHART_WINDOW_SECONDS = max(MIN_WINDOW_SECONDS, config.chart_window_hours * 3600)
-price_history: deque[tuple[float, float]] = deque()
+price_history: deque[tuple[float, float]] = deque(maxlen=PRICE_HISTORY_LIMIT)
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 driver = get_driver()
@@ -78,7 +78,7 @@ async def load_price_history() -> None:
 
 async def persist_price(timestamp: float, price: float) -> None:
     """写入数据库并维护内存中的价格历史"""
-    if len(price_history) >= PRICE_HISTORY_LIMIT:
+    if len(price_history) == PRICE_HISTORY_LIMIT:
         oldest_timestamp, _ = price_history.popleft()
         await db.execute(
             "DELETE FROM gold_price_history WHERE timestamp = ?",
