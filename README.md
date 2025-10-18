@@ -22,7 +22,7 @@ uv sync
 ```bash
 # 1. 配置 .env 文件
 # 2. 运行项目
-nb run --reload
+nb run
 ```
 
 ### Docker 部署
@@ -38,9 +38,7 @@ services:
     environment:
       HOST: "${HOST:-0.0.0.0}"
     volumes:
-      - ./config/nonebot2:/root/.config/nonebot2
-      - ./cache/nonebot2:/root/.cache/nonebot2
-      - ./data/nonebot2:/root/.local/share/nonebot2
+      - ./data:/app/data
       - ./.env.prod:/app/.env.prod:ro
     restart: always
 ```
