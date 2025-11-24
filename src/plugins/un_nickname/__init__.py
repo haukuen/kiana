@@ -4,9 +4,10 @@ import sqlite3
 from collections import defaultdict
 from time import time
 
-from nonebot import get_plugin_config, logger, on_message
+from nonebot import get_plugin_config, logger, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
     Bot,
+    GroupDecreaseNoticeEvent,
     GroupMessageEvent,
     Message,
     MessageSegment,
@@ -486,3 +487,19 @@ async def handle_clear_nickname(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     await clear_nickname_matcher.finish(f"已清空该用户的所有昵称：{', '.join(cleared_nicknames)}")
+
+
+group_decrease_matcher = on_notice(priority=50, block=False)
+
+
+@group_decrease_matcher.handle()
+async def handle_group_decrease(bot: Bot, event: GroupDecreaseNoticeEvent) -> None:
+    """监听群成员减少事件，自动清理该用户的昵称"""
+    group_id = str(event.group_id)
+    user_id = str(event.user_id)
+
+    cleared_nicknames = await clear_user_nicknames(group_id, user_id)
+    if cleared_nicknames:
+        logger.info(
+            f"用户 {user_id} 退出群 {group_id}，已自动清理其昵称: {', '.join(cleared_nicknames)}"
+        )
