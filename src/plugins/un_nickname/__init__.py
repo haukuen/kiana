@@ -7,6 +7,7 @@ from time import time
 from nonebot import get_plugin_config, logger, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
     Bot,
+    Event,
     GroupDecreaseNoticeEvent,
     GroupMessageEvent,
     Message,
@@ -432,7 +433,7 @@ async def handle_clear_nickname(bot: Bot, event: GroupMessageEvent) -> None:
     await clear_nickname_matcher.finish(f"已清空该用户的所有昵称：{', '.join(cleared_nicknames)}")
 
 
-async def is_group_decrease_event(event) -> bool:
+def is_group_decrease_event(event: Event) -> bool:
     """检查是否为群成员减少事件"""
     return isinstance(event, GroupDecreaseNoticeEvent)
 
