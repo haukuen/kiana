@@ -432,7 +432,12 @@ async def handle_clear_nickname(bot: Bot, event: GroupMessageEvent) -> None:
     await clear_nickname_matcher.finish(f"已清空该用户的所有昵称：{', '.join(cleared_nicknames)}")
 
 
-group_decrease_matcher = on_notice(priority=50, block=False)
+async def is_group_decrease_event(event) -> bool:
+    """检查是否为群成员减少事件"""
+    return isinstance(event, GroupDecreaseNoticeEvent)
+
+
+group_decrease_matcher = on_notice(rule=is_group_decrease_event, priority=50, block=False)
 
 
 @group_decrease_matcher.handle()
@@ -440,6 +445,12 @@ async def handle_group_decrease(bot: Bot, event: GroupDecreaseNoticeEvent) -> No
     """监听群成员减少事件，自动清理该用户的昵称"""
     group_id = str(event.group_id)
     user_id = str(event.user_id)
+    bot_id = str(bot.self_id)
+
+    # 跳过机器人自身的退群事件
+    if user_id == bot_id:
+        logger.debug(f"机器人自身退出群 {group_id}，跳过昵称清理")
+        return
 
     cleared_nicknames = await clear_user_nicknames(group_id, user_id)
     if cleared_nicknames:
