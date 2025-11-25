@@ -1,3 +1,5 @@
+import asyncio
+import html
 import json
 import re
 from io import BytesIO
@@ -112,6 +114,48 @@ def parse_json_card(event_or_message: MessageEvent | str) -> dict | None:
         return result
 
     logger.debug("JSON卡片解析 - 两种方式均失败")
+    return None
+
+
+def extract_url_from_qq_card(card_data: dict) -> str | None:
+    """从 QQ 卡片中提取 URL（支持多种卡片类型）
+
+    支持的卡片类型：
+    - com.tencent.tuwen.lua (图文分享): meta.news.jumpUrl
+    - com.tencent.miniapp_01 (小程序): meta.detail_1.qqdocurl
+
+    Args:
+        card_data: 解析后的 JSON 卡片数据
+
+    Returns:
+        提取到的 URL，未找到返回 None
+    """
+    app_type = card_data.get("app", "")
+    meta = card_data.get("meta", {})
+
+    if not meta:
+        logger.debug(f"QQ卡片URL提取 - meta 为空，app={app_type}")
+        return None
+
+    url = None
+
+    # 图文分享 (com.tencent.tuwen.lua) / 结构化消息 (com.tencent.structmsg)
+    if news := meta.get("news"):
+        url = news.get("jumpUrl")
+        if url:
+            logger.debug(f"QQ卡片URL提取 - 从 meta.news.jumpUrl 提取成功，app={app_type}")
+
+    # 小程序分享 (com.tencent.miniapp_01)
+    if not url and (detail := meta.get("detail_1")):
+        url = detail.get("qqdocurl") or detail.get("jumpUrl")
+        if url:
+            logger.debug(f"QQ卡片URL提取 - 从 meta.detail_1 提取成功，app={app_type}")
+
+    if url:
+        # 处理反斜杠转义
+        return url.replace("\\", "/")
+
+    logger.debug(f"QQ卡片URL提取 - 未找到 URL，app={app_type}, meta keys={list(meta.keys())}")
     return None
 
 
@@ -264,13 +308,13 @@ async def is_xiaohongshu_link(event: MessageEvent) -> bool:
     has_json = any(seg.type == "json" for seg in event.message)
     has_text = any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message)
 
-    # 检查 JSON 卡片（需要配置 cookie）
-    if has_json and config.xiaohongshu_cookie:
+    # 检查 JSON 卡片（检测阶段不要求 cookie，处理阶段再验证）
+    if has_json:
         json_data = parse_json_card(event)
-        if json_data and "meta" in json_data and "news" in json_data["meta"]:
-            news = json_data["meta"]["news"]
-            jump_url = news.get("jumpUrl", "")
-            # 简单验证：检查是否包含小红书域名
+        if json_data:
+            # 使用通用函数提取 URL（支持多种卡片类型）
+            jump_url = extract_url_from_qq_card(json_data)
+            # 验证是否包含小红书域名
             if jump_url and ("xiaohongshu.com" in jump_url or "xhslink.com" in jump_url):
                 return True
 
@@ -359,11 +403,13 @@ async def extract_url_from_card_message(event_or_message: MessageEvent | str) ->
     """
     # 使用工具函数解析 JSON 卡片（支持 event 和字符串）
     json_data = parse_json_card(event_or_message)
-    if not json_data or "meta" not in json_data or "news" not in json_data["meta"]:
+    if not json_data:
         return ""
 
-    news = json_data["meta"]["news"]
-    jump_url = news.get("jumpUrl", "")
+    # 使用通用函数提取 URL（支持多种卡片类型）
+    jump_url = extract_url_from_qq_card(json_data)
+    if not jump_url:
+        return ""
 
     if "xiaohongshu.com" not in jump_url and "xhslink.com" not in jump_url:
         return ""
@@ -538,6 +584,10 @@ async def handle_xiaohongshu_message(
     event: MessageEvent,
 ):
     """处理小红书消息"""
+    # 处理阶段检查 cookie 配置
+    if not config.xiaohongshu_cookie:
+        await xiaohongshu_matcher.finish("未配置小红书 cookie，无法解析笔记内容")
+
     message = str(event.message).strip()
 
     # 先尝试从卡片消息中提取URL（传入 event 以使用官方方式）
