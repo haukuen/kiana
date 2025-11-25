@@ -59,7 +59,7 @@ class DouyinParser:
                 "title": video_info.title,
             }
         except Exception as e:
-            logger.error(f"解析抖音视频失败: {e}")
+            logger.error(f"解析抖音视频失败: {e}", exc_info=True)
             return f"获取视频信息失败: {e!s}"
 
     async def parse_video(self, url: str) -> ParseResult:
@@ -133,7 +133,7 @@ class DouyinParser:
             try:
                 return await self.parse_video(url)
             except Exception as e:
-                logger.warning(f"解析失败 {url[:60]}, error: {e}")
+                logger.warning(f"解析失败 {url[:60]}, error: {e}", exc_info=True)
                 continue
         raise Exception("作品已删除，或资源直链获取失败, 请稍后再试")
 
@@ -160,7 +160,7 @@ class DouyinParser:
                 author=data["author"]["nickname"],
             )
         except Exception as e:
-            logger.error(f"解析抖音视频失败: {e}")
+            logger.error(f"解析抖音视频失败: {e}", exc_info=True)
             raise e
 
 
@@ -201,5 +201,5 @@ async def get_video_info(video_id: str) -> dict | str:
 
         return {"url": video_info.video_url, "headers": IOS_HEADER, "title": video_info.title}
     except Exception as e:
-        logger.error(f"解析抖音视频失败: {e}")
+        logger.error(f"解析抖音视频失败: {e}", exc_info=True)
         return f"获取视频信息失败: {e!s}"

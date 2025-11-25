@@ -63,7 +63,7 @@ def normalize_video_id(text: str) -> str:
     )
 
     # 标准化 AV 号前缀为小写，直接返回结果
-    return re.sub(r"\b[Aa][Vv](\d{6,})\b", r"av\1", text)
+    return re.sub(r"\b[Aa][Vv](\d+)\b", r"av\1", text)
 
 
 def is_valid_bvid(bvid: str) -> bool:
@@ -116,7 +116,7 @@ _BASE58_CHARS = r"[FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf]"
 
 # BV/AV 号核心正则模式（支持大小写不敏感匹配）
 _BV_PATTERN_STR = rf"[Bb][Vv]{_BASE58_CHARS}{{10}}"
-_AV_PATTERN_STR = r"[Aa][Vv](\d{6,})"
+_AV_PATTERN_STR = r"[Aa][Vv](\d+)"
 
 # 编译的正则对象（用于内部搜索）
 _BV_REGEX = re.compile(_BV_PATTERN_STR)

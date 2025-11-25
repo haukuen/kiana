@@ -236,8 +236,8 @@ async def handle_bilibili_message(
         if isinstance(video_data, str):
             # 记录详细错误到日志
             logger.warning(f"Bilibili视频获取失败: {video_data}")
-            # 向用户发送友好提示
-            await bilibili_matcher.finish("视频获取失败")
+            # 向用户发送详细错误信息
+            await bilibili_matcher.finish(video_data)
 
         # 2. 下载并发送视频
         video_bytes = await download_media(video_data["url"], headers=video_data["headers"])
@@ -309,8 +309,8 @@ async def handle_douyin_message(
         if isinstance(video_info, str):
             # 记录详细错误到日志
             logger.warning(f"抖音视频获取失败: {video_info}")
-            # 向用户发送友好提示
-            await douyin_matcher.finish("视频获取失败")
+            # 向用户发送详细错误信息
+            await douyin_matcher.finish(video_info)
 
         # 2. 发送标题
         await douyin_matcher.send(f"{video_info['title']}")
@@ -385,14 +385,14 @@ async def process_xiaohongshu_url(jump_url: str) -> str:
                 logger.warning(f"小红书短链接过长: {len(jump_url)} 字符")
                 return ""
         except Exception as e:
-            logger.warning(f"小红书短链接解析异常: {jump_url} - {e}")
+            logger.warning(f"小红书短链接解析异常: {jump_url} - {e}", exc_info=True)
             return ""
 
         # 使用工具函数解析短链接
         try:
             jump_url = await get_redirect_url(jump_url, timeout=10.0)
         except Exception as e:
-            logger.warning(f"小红书短链接重定向失败: {jump_url} - {e}")
+            logger.warning(f"小红书短链接重定向失败: {jump_url} - {e}", exc_info=True)
             return ""
 
     # 提取笔记ID
@@ -445,7 +445,7 @@ async def download_image_concurrent(
             image_data = BytesIO(response.content)
             return MessageSegment.image(image_data)
     except Exception as e:
-        logger.warning(f"下载图片失败 {pic_url}: {e}")
+        logger.warning(f"下载图片失败 {pic_url}: {e}", exc_info=True)
         return None
 
 
@@ -557,8 +557,8 @@ async def handle_xiaohongshu_message(
         if isinstance(note_info, str):
             # 记录详细错误到日志
             logger.warning(f"小红书笔记获取失败: {note_info}")
-            # 向用户发送友好提示
-            await xiaohongshu_matcher.finish("笔记获取失败")
+            # 向用户发送详细错误信息
+            await xiaohongshu_matcher.finish(note_info)
 
         info_text = f"{note_info['title']}\n作者: {note_info['author']}"
 

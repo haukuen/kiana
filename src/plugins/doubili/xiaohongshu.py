@@ -107,7 +107,7 @@ class XiaoHongShuParser:
         try:
             return json_obj["note"]["noteDetailMap"][note_id]["note"]
         except KeyError as e:
-            logger.error(f"小红书数据结构解析失败: {e}")
+            logger.error(f"小红书数据结构解析失败: {e}", exc_info=True)
             raise ValueError("笔记数据不存在或结构异常") from e
 
     def _parse_media_content(self, note_data: dict[str, Any]) -> tuple[list[str], str]:
@@ -197,7 +197,7 @@ class XiaoHongShuParser:
             )
 
         except Exception as e:
-            logger.error(f"小红书解析失败: {e}")
+            logger.error(f"小红书解析失败: {e}", exc_info=True)
             raise ValueError(f"解析失败: {e}") from e
 
 
@@ -232,5 +232,5 @@ async def get_note_info(url: str) -> dict | str:
             "cover_url": result.cover_url,
         }
     except Exception as e:
-        logger.error(f"获取小红书笔记信息失败: {e}")
+        logger.error(f"获取小红书笔记信息失败: {e}", exc_info=True)
         return f"获取笔记信息失败: {e}"
