@@ -297,36 +297,35 @@ def validate_market_code(code: str, market: str) -> tuple[bool, str | None]:
     Returns:
         (是否有效, 错误信息)。如果有效返回 (True, None)，否则返回 (False, 错误信息)
     """
-    market = market.lower()
-
-    if market == "sh":
-        if not is_shanghai_stock(code):
-            # 生成友好的前缀提示（只显示前两位作为简化）
-            prefixes_simplified = sorted({p[:2] for p in STOCK_PREFIXES_SH})
-            prefixes_str = "/".join(prefixes_simplified)
-            return (
-                False,
-                f"股票代码 {code} 不属于上海市场(.SH)，上海股票应以 {prefixes_str}X 开头",
-            )
-    elif market == "sz":
-        if not is_shenzhen_stock(code):
-            # 生成友好的前缀提示（只显示前两位作为简化）
-            prefixes_simplified = sorted({p[:2] for p in STOCK_PREFIXES_SZ})
-            prefixes_str = "/".join(prefixes_simplified)
-            return (
-                False,
-                f"股票代码 {code} 不属于深圳市场(.SZ)，深圳股票应以 {prefixes_str}X 开头",
-            )
-    elif market == "bj":
-        if not is_beijing_stock(code):
-            # 北交所前缀提示
-            prefixes_str = "/".join(sorted(STOCK_PREFIXES_BJ))
-            return (
-                False,
-                f"股票代码 {code} 不属于北京市场(.BJ)，北交所股票应为8位数字且以 {prefixes_str} 开头",
-            )
-    else:
-        return False, f"未知的市场标识: {market}"
+    match market.lower():
+        case "sh":
+            if not is_shanghai_stock(code):
+                # 生成友好的前缀提示（只显示前两位作为简化）
+                prefixes_simplified = sorted({p[:2] for p in STOCK_PREFIXES_SH})
+                prefixes_str = "/".join(prefixes_simplified)
+                return (
+                    False,
+                    f"股票代码 {code} 不属于上海市场(.SH)，上海股票应以 {prefixes_str}X 开头",
+                )
+        case "sz":
+            if not is_shenzhen_stock(code):
+                # 生成友好的前缀提示（只显示前两位作为简化）
+                prefixes_simplified = sorted({p[:2] for p in STOCK_PREFIXES_SZ})
+                prefixes_str = "/".join(prefixes_simplified)
+                return (
+                    False,
+                    f"股票代码 {code} 不属于深圳市场(.SZ)，深圳股票应以 {prefixes_str}X 开头",
+                )
+        case "bj":
+            if not is_beijing_stock(code):
+                # 北交所前缀提示
+                prefixes_str = "/".join(sorted(STOCK_PREFIXES_BJ))
+                return (
+                    False,
+                    f"股票代码 {code} 不属于北京市场(.BJ)，北交所股票应为8位数字且以 {prefixes_str} 开头",
+                )
+        case _:
+            return False, f"未知的市场标识: {market}"
 
     return True, None
 
