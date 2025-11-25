@@ -144,8 +144,7 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
     """从JSON小程序中提取视频ID"""
     try:
         # 增强的JSON解析，支持多种转义格式
-        json_str = _JSON_CQ_PATTERN.search(text)
-        if not json_str:
+        if not (json_str := _JSON_CQ_PATTERN.search(text)):
             return "", ""
         # 使用 html.unescape() 解码所有 HTML 实体（&#44;、&#91;、&amp; 等）
         decoded_data = html.unescape(unquote(json_str[1]))
@@ -166,14 +165,12 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
                     logger.error(f"短链接重定向失败，尝试直接解析: {e}")
                     # 重定向失败，尝试直接从URL提取
             # 使用精确的 BV 号格式（Base58 + 固定位）
-            bv_match = _BV_REGEX.search(doc_url)
-            if bv_match:
+            if bv_match := _BV_REGEX.search(doc_url):
                 bvid = bv_match[0]
                 if is_valid_bvid(bvid):
                     return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")
-            av_match = _AV_REGEX.search(doc_url)
-            if av_match:
+            if av_match := _AV_REGEX.search(doc_url):
                 return "avid", av_match[1]
     except Exception as e:
         logger.error(f"解析小程序数据失败: {type(e).__name__}: {e}", exc_info=True)
@@ -196,14 +193,12 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
             return "avid", matched[1]
         case "bilibili":
             # 使用精确的 BV 号格式（Base58 + 固定位）
-            bv_match = _BV_REGEX.search(matched[0])
-            if bv_match:
+            if bv_match := _BV_REGEX.search(matched[0]):
                 bvid = bv_match[0]
                 if is_valid_bvid(bvid):
                     return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")
-            av_match = _AV_REGEX.search(matched[0])
-            if av_match:
+            if av_match := _AV_REGEX.search(matched[0]):
                 return "avid", av_match[1]
     return "", ""
 

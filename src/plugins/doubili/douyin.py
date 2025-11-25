@@ -87,9 +87,7 @@ class DouyinParser:
             pattern=r"window\._ROUTER_DATA\s*=\s*(.*?)</script>",
             flags=re.DOTALL,
         )
-        find_res = pattern.search(text)
-
-        if not find_res or not find_res[1]:
+        if not (find_res := pattern.search(text)) or not find_res[1]:
             raise Exception("无法从页面提取视频信息")
 
         json_data = json.loads(find_res[1].strip())
@@ -118,8 +116,7 @@ class DouyinParser:
             iesdouyin_url = self._build_iesdouyin_url(_type, video_id)
         else:
             iesdouyin_url = await get_redirect_url(share_url)
-            matched = re.search(r"(slides|video|note)/(\d+)", iesdouyin_url)
-            if not matched:
+            if not (matched := re.search(r"(slides|video|note)/(\d+)", iesdouyin_url)):
                 raise Exception(f"无法从 {share_url} 中解析出 ID")
             _type, video_id = matched[1], matched[2]
             if _type == "slides":

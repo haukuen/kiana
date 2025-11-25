@@ -70,8 +70,7 @@ def parse_json_card_from_cqcode(message: str) -> dict | None:
         return None
 
     try:
-        match = _JSON_CARD_PATTERN.search(message)
-        if not match:
+        if not (match := _JSON_CARD_PATTERN.search(message)):
             return None
 
         json_str = match[1]
@@ -100,8 +99,7 @@ def parse_json_card(event_or_message: MessageEvent | str) -> dict | None:
     """
     # 优先使用 MessageSegment 官方方式
     if isinstance(event_or_message, MessageEvent):
-        result = parse_json_card_from_segment(event_or_message)
-        if result is not None:
+        if (result := parse_json_card_from_segment(event_or_message)) is not None:
             return result
         # 回退到 CQ 码方式
         message = str(event_or_message.message)
@@ -109,8 +107,7 @@ def parse_json_card(event_or_message: MessageEvent | str) -> dict | None:
         message = event_or_message
 
     # CQ 码方式（回退或直接传入字符串的情况）
-    result = parse_json_card_from_cqcode(message)
-    if result is not None:
+    if (result := parse_json_card_from_cqcode(message)) is not None:
         return result
 
     logger.debug("JSON卡片解析 - 两种方式均失败")
@@ -553,23 +550,17 @@ def create_forward_nodes(
     bot: Bot, info_text: str, media_segments: list[MessageSegment] | None = None
 ) -> list[dict[str, Any]]:
     """创建合并转发消息节点"""
-    forward_nodes: list[dict[str, Any]] = []
-
     # 添加文字内容节点
-    text_node = {
-        "type": "node",
-        "data": {"name": "", "uin": bot.self_id, "content": info_text},
-    }
-    forward_nodes.append(text_node)
+    forward_nodes: list[dict[str, Any]] = [
+        {"type": "node", "data": {"name": "", "uin": bot.self_id, "content": info_text}}
+    ]
 
     # 添加媒体内容节点
     if media_segments:
-        for media_seg in media_segments:
-            node = {
-                "type": "node",
-                "data": {"name": "", "uin": bot.self_id, "content": media_seg},
-            }
-            forward_nodes.append(node)
+        forward_nodes.extend(
+            {"type": "node", "data": {"name": "", "uin": bot.self_id, "content": seg}}
+            for seg in media_segments
+        )
 
     return forward_nodes
 

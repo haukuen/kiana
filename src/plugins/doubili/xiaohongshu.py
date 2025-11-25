@@ -88,8 +88,7 @@ class XiaoHongShuParser:
     def _parse_initial_state(self, html: str) -> dict[str, Any]:
         """解析页面中的初始状态数据"""
         pattern = r"window\.__INITIAL_STATE__=(.*?)</script>"
-        matched = re.search(pattern, html)
-        if not matched:
+        if not (matched := re.search(pattern, html)):
             raise ValueError("页面中未找到初始状态数据")
 
         json_str = matched[1]
