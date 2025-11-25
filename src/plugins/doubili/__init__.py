@@ -29,10 +29,33 @@ config = get_plugin_config(Config)
 _JSON_CARD_PATTERN = re.compile(r"\[CQ:json,data=([^\]]{1,10000})\]")
 
 
-def parse_json_card(message: str) -> dict | None:
-    """解析 CQ:json 卡片消息
+def parse_json_card_from_segment(event: MessageEvent) -> dict | None:
+    """从 MessageSegment 解析 JSON 卡片（官方推荐方式）
 
-    从 OneBot V11 的 JSON 卡片消息中提取数据。
+    直接从消息段对象中提取 JSON 数据，无需处理 CQ 码转义。
+
+    Args:
+        event: 消息事件
+
+    Returns:
+        解析后的 JSON 对象，解析失败返回 None
+    """
+    for seg in event.message:
+        if seg.type == "json":
+            data = seg.data.get("data")
+            if data:
+                try:
+                    result = json.loads(data) if isinstance(data, str) else data
+                    logger.debug("JSON卡片解析 - 使用 MessageSegment 方式成功")
+                    return result
+                except json.JSONDecodeError as e:
+                    logger.debug(f"JSON卡片解析 - MessageSegment 方式 JSON 解码失败: {e}")
+    return None
+
+
+def parse_json_card_from_cqcode(message: str) -> dict | None:
+    """从 CQ 码解析 JSON 卡片（回退方式）
+
     处理常见的转义字符（如 &#44;）和 URL 编码。
 
     Args:
@@ -55,11 +78,41 @@ def parse_json_card(message: str) -> dict | None:
         # 处理 URL 编码
         json_str = unquote(json_str)
 
-        return json.loads(json_str)
+        result = json.loads(json_str)
+        logger.debug("JSON卡片解析 - 使用 CQ码正则 回退方式成功")
+        return result
 
     except (json.JSONDecodeError, ValueError) as e:
-        logger.debug(f"JSON 卡片解析失败: {e}")
+        logger.debug(f"JSON卡片解析 - CQ码正则 方式失败: {e}")
         return None
+
+
+def parse_json_card(event_or_message: MessageEvent | str) -> dict | None:
+    """解析 JSON 卡片消息（优先官方方式，失败回退 CQ 码）
+
+    Args:
+        event_or_message: MessageEvent 对象或消息字符串
+
+    Returns:
+        解析后的 JSON 对象，解析失败返回 None
+    """
+    # 优先使用 MessageSegment 官方方式
+    if isinstance(event_or_message, MessageEvent):
+        result = parse_json_card_from_segment(event_or_message)
+        if result is not None:
+            return result
+        # 回退到 CQ 码方式
+        message = str(event_or_message.message)
+    else:
+        message = event_or_message
+
+    # CQ 码方式（回退或直接传入字符串的情况）
+    result = parse_json_card_from_cqcode(message)
+    if result is not None:
+        return result
+
+    logger.debug("JSON卡片解析 - 两种方式均失败")
+    return None
 
 
 async def get_redirect_url(url: str, timeout: float = 10.0) -> str:
@@ -111,7 +164,7 @@ def _log_video_processing(
         platform: 平台名称 (Bilibili/Douyin/Xiaohongshu)
         event: 消息事件
         video_id: 视频ID或URL
-        id_type: ID类型 (BV/av/等)，为空则不显示
+        id_type: ID类型 (bvid/avid/等)，为空则不显示
         url_type: ID类型描述 (视频ID/URL)
     """
     group_id = event.group_id if isinstance(event, GroupMessageEvent) else "私聊"
@@ -122,45 +175,31 @@ def _log_video_processing(
     )
 
 
-async def has_text_or_json(event: MessageEvent) -> bool:
-    """轻量级检查: 消息是否包含文本或JSON内容
-
-    用于快速过滤纯媒体消息(仅包含图片/语音/视频)
-    作为Rule组合的第一道规则，利用短路求值避免后续复杂检查
-
-    Returns:
-        True: 消息包含文本段或JSON卡片
-        False: 纯媒体消息
-    """
-    for seg in event.message:
-        # 检查文本段（必须有非空内容）
-        if seg.type == "text" and seg.data.get("text", "").strip():
-            return True
-        # 检查JSON卡片（分享卡片）
-        if seg.type == "json":
-            return True
-    return False
-
-
 async def is_bilibili_link(event: MessageEvent) -> bool:
     """检查是否为B站链接（仅内容检查）"""
-    message = str(event.message).strip()
+    # 根据消息类型选择检查方式
+    has_json = any(seg.type == "json" for seg in event.message)
+    has_text = any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message)
 
-    # 使用工具函数解析 JSON 卡片
-    if "CQ:json" in message:
-        json_data = parse_json_card(message)
+    # 检查 JSON 卡片
+    if has_json:
+        json_data = parse_json_card(event)
         if json_data and "meta" in json_data and "detail_1" in json_data["meta"]:
             detail = json_data["meta"]["detail_1"]
             # 验证 appid 是 B站的
             if detail.get("appid") == "1109937557":
                 return True
 
-    # 检查普通链接
-    return any(pattern.search(message) for pattern in bilibili.PATTERNS.values())
+    # 检查普通文本链接
+    if has_text:
+        message = event.get_plaintext().strip()
+        return any(pattern.search(message) for pattern in bilibili.PATTERNS.values())
+
+    return False
 
 
 bilibili_matcher = on_message(
-    rule=Rule(_bilibili_group_rule, has_text_or_json, is_bilibili_link),
+    rule=Rule(_bilibili_group_rule, is_bilibili_link),
     priority=5,
     block=True,  # 匹配成功后阻止后续 matcher 执行,避免重复处理
 )
@@ -189,10 +228,10 @@ async def handle_bilibili_message(
 
     try:
         # 1. 获取视频流信息
-        if id_type == "BV":
+        if id_type == "bvid":
             video_data = await bilibili.get_video_stream(bvid=video_id)
-        else:  # aid
-            video_data = await bilibili.get_video_stream(aid=int(video_id))
+        else:  # avid
+            video_data = await bilibili.get_video_stream(avid=int(video_id))
 
         if isinstance(video_data, str):
             # 记录详细错误到日志
@@ -221,11 +260,13 @@ async def is_douyin_link(event: MessageEvent) -> bool:
 
 async def is_xiaohongshu_link(event: MessageEvent) -> bool:
     """检查是否为小红书链接（仅内容检查）"""
-    message = str(event.message).strip()
+    # 根据消息类型选择检查方式
+    has_json = any(seg.type == "json" for seg in event.message)
+    has_text = any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message)
 
-    # 使用工具函数解析 JSON 卡片
-    if "CQ:json" in message and config.xiaohongshu_cookie:
-        json_data = parse_json_card(message)
+    # 检查 JSON 卡片（需要配置 cookie）
+    if has_json and config.xiaohongshu_cookie:
+        json_data = parse_json_card(event)
         if json_data and "meta" in json_data and "news" in json_data["meta"]:
             news = json_data["meta"]["news"]
             jump_url = news.get("jumpUrl", "")
@@ -233,12 +274,16 @@ async def is_xiaohongshu_link(event: MessageEvent) -> bool:
             if jump_url and ("xiaohongshu.com" in jump_url or "xhslink.com" in jump_url):
                 return True
 
-    # 检查普通链接
-    return any(pattern.search(message) for pattern in xiaohongshu.PATTERNS.values())
+    # 检查普通文本链接
+    if has_text:
+        message = event.get_plaintext().strip()
+        return any(pattern.search(message) for pattern in xiaohongshu.PATTERNS.values())
+
+    return False
 
 
 douyin_matcher = on_message(
-    rule=Rule(_douyin_group_rule, has_text_or_json, is_douyin_link),
+    rule=Rule(_douyin_group_rule, is_douyin_link),
     priority=5,
     block=True,  # 匹配成功后阻止后续 matcher 执行,避免重复处理
 )
@@ -301,22 +346,19 @@ async def handle_douyin_message(
 
 # 小红书消息匹配器
 xiaohongshu_matcher = on_message(
-    rule=Rule(_xiaohongshu_group_rule, has_text_or_json, is_xiaohongshu_link),
+    rule=Rule(_xiaohongshu_group_rule, is_xiaohongshu_link),
     priority=5,
     block=True,  # 匹配成功后阻止后续 matcher 执行,避免重复处理
 )
 
 
-async def extract_url_from_card_message(message: str) -> str:
+async def extract_url_from_card_message(event_or_message: MessageEvent | str) -> str:
     """从卡片消息中提取小红书URL
 
     注意: 调用此函数前应确保已通过 is_xiaohongshu_link 检查 cookie 配置
     """
-    if "CQ:json" not in message:
-        return ""
-
-    # 使用工具函数解析 JSON 卡片
-    json_data = parse_json_card(message)
+    # 使用工具函数解析 JSON 卡片（支持 event 和字符串）
+    json_data = parse_json_card(event_or_message)
     if not json_data or "meta" not in json_data or "news" not in json_data["meta"]:
         return ""
 
@@ -498,8 +540,8 @@ async def handle_xiaohongshu_message(
     """处理小红书消息"""
     message = str(event.message).strip()
 
-    # 先尝试从卡片消息中提取URL
-    url = await extract_url_from_card_message(message)
+    # 先尝试从卡片消息中提取URL（传入 event 以使用官方方式）
+    url = await extract_url_from_card_message(event)
 
     if not url:
         url = await xiaohongshu.extract_url(message)

@@ -170,11 +170,11 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
             if bv_match:
                 bvid = bv_match.group(0)
                 if is_valid_bvid(bvid):
-                    return "BV", bvid
+                    return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")
             av_match = _AV_REGEX.search(doc_url)
             if av_match:
-                return "aid", av_match.group(1)
+                return "avid", av_match.group(1)
     except Exception as e:
         logger.error(f"解析小程序数据失败: {type(e).__name__}: {e}", exc_info=True)
     return "", ""
@@ -188,22 +188,22 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
     if key == "BV":
         bvid = matched.group(1)
         if is_valid_bvid(bvid):
-            return "BV", bvid
+            return "bvid", bvid
         logger.debug(f"无效的 BV 号: {bvid}")
         return "", ""
     if key == "av":
-        return "aid", matched.group(1)
+        return "avid", matched.group(1)
     if key == "bilibili":
         # 使用精确的 BV 号格式（Base58 + 固定位）
         bv_match = _BV_REGEX.search(matched.group(0))
         if bv_match:
             bvid = bv_match.group(0)
             if is_valid_bvid(bvid):
-                return "BV", bvid
+                return "bvid", bvid
             logger.debug(f"无效的 BV 号: {bvid}")
         av_match = _AV_REGEX.search(matched.group(0))
         if av_match:
-            return "aid", av_match.group(1)
+            return "avid", av_match.group(1)
     return "", ""
 
 
@@ -223,12 +223,12 @@ async def extract_video_id(text: str) -> tuple[str, str]:
     return "", ""
 
 
-async def get_video_info(bvid: str | None = None, aid: int | None = None):
+async def get_video_info(bvid: str | None = None, avid: int | None = None):
     """获取 Bilibili 视频详细信息"""
-    if not bvid and not aid:
-        return "必须提供 bvid 或 aid 参数！"
+    if not bvid and not avid:
+        return "必须提供 bvid 或 avid 参数！"
 
-    params = {"bvid": bvid, "aid": aid}
+    params = {"bvid": bvid, "aid": avid}
 
     async with AsyncClient(follow_redirects=True) as client:
         response = await client.get(
@@ -247,9 +247,9 @@ async def get_video_info(bvid: str | None = None, aid: int | None = None):
     return None
 
 
-async def get_video_stream(bvid: str | None = None, aid: int | None = None) -> dict | str:
+async def get_video_stream(bvid: str | None = None, avid: int | None = None) -> dict | str:
     """获取 Bilibili 视频流信息"""
-    video_info = await get_video_info(bvid=bvid, aid=aid)
+    video_info = await get_video_info(bvid=bvid, avid=avid)
     if isinstance(video_info, str):  # 如果返回的是错误信息
         return video_info
 
@@ -258,10 +258,13 @@ async def get_video_stream(bvid: str | None = None, aid: int | None = None) -> d
         return "未能获取视频的 cid！"
 
     params = {
-        "bvid": bvid,
         "cid": cid,
         "qn": config.VIDEO_QUALITY,
     }
+    if bvid:
+        params["bvid"] = bvid
+    elif avid:
+        params["avid"] = avid
 
     async with AsyncClient(follow_redirects=True) as client:
         response = await client.get(
