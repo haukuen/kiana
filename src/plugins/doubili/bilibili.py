@@ -148,7 +148,7 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
         if not json_str:
             return "", ""
         # 使用 html.unescape() 解码所有 HTML 实体（&#44;、&#91;、&amp; 等）
-        decoded_data = html.unescape(unquote(json_str.group(1)))
+        decoded_data = html.unescape(unquote(json_str[1]))
         json_data = json.loads(decoded_data)
         detail = json_data["meta"]["detail_1"]
         if "qqdocurl" in detail:
@@ -168,13 +168,13 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
             # 使用精确的 BV 号格式（Base58 + 固定位）
             bv_match = _BV_REGEX.search(doc_url)
             if bv_match:
-                bvid = bv_match.group(0)
+                bvid = bv_match[0]
                 if is_valid_bvid(bvid):
                     return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")
             av_match = _AV_REGEX.search(doc_url)
             if av_match:
-                return "avid", av_match.group(1)
+                return "avid", av_match[1]
     except Exception as e:
         logger.error(f"解析小程序数据失败: {type(e).__name__}: {e}", exc_info=True)
     return "", ""
@@ -182,28 +182,28 @@ async def _extract_from_json(text: str) -> tuple[str, str]:
 
 async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
     """从URL中提取视频ID"""
-    if key in ("b23", "bili2233"):
-        url = await get_redirect_url(matched.group(0), headers=config.API_HEADERS)
+    if key in {"b23", "bili2233"}:
+        url = await get_redirect_url(matched[0], headers=config.API_HEADERS)
         return await extract_video_id(url)
     if key == "BV":
-        bvid = matched.group(1)
+        bvid = matched[1]
         if is_valid_bvid(bvid):
             return "bvid", bvid
         logger.debug(f"无效的 BV 号: {bvid}")
         return "", ""
     if key == "av":
-        return "avid", matched.group(1)
+        return "avid", matched[1]
     if key == "bilibili":
         # 使用精确的 BV 号格式（Base58 + 固定位）
-        bv_match = _BV_REGEX.search(matched.group(0))
+        bv_match = _BV_REGEX.search(matched[0])
         if bv_match:
-            bvid = bv_match.group(0)
+            bvid = bv_match[0]
             if is_valid_bvid(bvid):
                 return "bvid", bvid
             logger.debug(f"无效的 BV 号: {bvid}")
-        av_match = _AV_REGEX.search(matched.group(0))
+        av_match = _AV_REGEX.search(matched[0])
         if av_match:
-            return "avid", av_match.group(1)
+            return "avid", av_match[1]
     return "", ""
 
 

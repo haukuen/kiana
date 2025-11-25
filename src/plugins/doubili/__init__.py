@@ -74,7 +74,7 @@ def parse_json_card_from_cqcode(message: str) -> dict | None:
         if not match:
             return None
 
-        json_str = match.group(1)
+        json_str = match[1]
         # 处理转义字符：&#44; → ,
         json_str = json_str.replace("&#44;", ",")
         # 处理 URL 编码
@@ -449,7 +449,7 @@ async def process_xiaohongshu_url(jump_url: str) -> str:
         # 如果无法提取ID，回退到原来的方法
         return await xiaohongshu.extract_url(jump_url)
 
-    xhs_id = matched.group(1)
+    xhs_id = matched[1]
     # 解析URL参数
     parsed_url = urlparse(jump_url)
     # 解码HTML实体
@@ -595,7 +595,7 @@ async def handle_xiaohongshu_message(
     if not url:
         await xiaohongshu_matcher.finish("未找到有效的笔记链接")
 
-    _log_video_processing("Xiaohongshu", event, url[:50] + "...", url_type="URL")
+    _log_video_processing("Xiaohongshu", event, f"{url[:50]}...", url_type="URL")
 
     try:
         # 1. 获取笔记信息

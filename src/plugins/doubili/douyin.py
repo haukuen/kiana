@@ -89,10 +89,10 @@ class DouyinParser:
         )
         find_res = pattern.search(text)
 
-        if not find_res or not find_res.group(1):
+        if not find_res or not find_res[1]:
             raise Exception("无法从页面提取视频信息")
 
-        json_data = json.loads(find_res.group(1).strip())
+        json_data = json.loads(find_res[1].strip())
 
         video_id_page_key = "video_(id)/page"
         note_id_page_key = "note_(id)/page"
@@ -114,14 +114,14 @@ class DouyinParser:
 
     async def parse_share_url(self, share_url: str) -> ParseResult:
         if matched := re.match(r"(video|note)/([0-9]+)", share_url):
-            _type, video_id = matched.group(1), matched.group(2)
+            _type, video_id = matched[1], matched[2]
             iesdouyin_url = self._build_iesdouyin_url(_type, video_id)
         else:
             iesdouyin_url = await get_redirect_url(share_url)
             matched = re.search(r"(slides|video|note)/(\d+)", iesdouyin_url)
             if not matched:
                 raise Exception(f"无法从 {share_url} 中解析出 ID")
-            _type, video_id = matched.group(1), matched.group(2)
+            _type, video_id = matched[1], matched[2]
             if _type == "slides":
                 return await self.parse_slides(video_id)
 
@@ -174,7 +174,7 @@ async def get_redirect_url(url: str) -> str:
 async def extract_video_id(text: str) -> str:
     """从文本中提取视频ID"""
     if matched := PATTERNS["douyin"].search(text):
-        share_url = matched.group(0)
+        share_url = matched[0]
 
         # 如果是短链接，先获取重定向后的URL
         if "v.douyin.com" in share_url:
@@ -182,7 +182,7 @@ async def extract_video_id(text: str) -> str:
 
         # 从URL中提取视频ID
         if video_match := re.search(r"video/(\d+)", share_url):
-            return video_match.group(1)
+            return video_match[1]
 
     return ""
 

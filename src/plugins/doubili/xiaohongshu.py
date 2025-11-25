@@ -69,9 +69,8 @@ class XiaoHongShuParser:
         """从URL中提取笔记ID"""
         # 匹配各种小红书URL格式中的笔记ID
         pattern = r"(?:/explore/|/discovery/item/|source=note&noteId=)(\w+)"
-        matched = re.search(pattern, url)
-        if matched:
-            return matched.group(1)
+        if matched := re.search(pattern, url):
+            return matched[1]
         raise ValueError("无法从URL中提取笔记ID")
 
     def _build_api_url(
@@ -93,7 +92,7 @@ class XiaoHongShuParser:
         if not matched:
             raise ValueError("页面中未找到初始状态数据")
 
-        json_str = matched.group(1)
+        json_str = matched[1]
         # 处理JavaScript中的undefined值
         json_str = json_str.replace("undefined", "null")
 
@@ -205,7 +204,7 @@ async def extract_url(text: str) -> str:
     """从文本中提取小红书URL"""
     for pattern in PATTERNS.values():
         if matched := pattern.search(text):
-            return matched.group(0)
+            return matched[0]
     return ""
 
 
