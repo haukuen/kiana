@@ -244,7 +244,6 @@ async def get_video_info(bvid: str | None = None, avid: int | None = None):
             return f"视频时长超过{config.MAX_VIDEO_DURATION / 60:.1f}分钟，无法下载"
 
         return data["data"]
-    return None
 
 
 async def get_video_stream(bvid: str | None = None, avid: int | None = None) -> dict | str:
@@ -283,4 +282,3 @@ async def get_video_stream(bvid: str | None = None, avid: int | None = None) -> 
             return f"视频大小超过{config.MAX_VIDEO_SIZE / 1024 / 1024:.1f}MB，无法下载"
 
         return {"url": video_url, "headers": config.API_HEADERS}
-    return None

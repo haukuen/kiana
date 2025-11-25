@@ -469,15 +469,11 @@ async def process_xiaohongshu_url(jump_url: str) -> str:
     return final_url
 
 
-async def download_image_concurrent(
-    pic_url: str,
-    max_concurrent: int = 5,
-) -> MessageSegment | None:
-    """并发下载单张图片
+async def _download_single_image(pic_url: str) -> MessageSegment | None:
+    """下载单张图片（内部函数）
 
     Args:
         pic_url: 图片URL
-        max_concurrent: 最大并发数（通过semaphore控制）
 
     Returns:
         MessageSegment: 下载成功返回图片消息段
@@ -516,7 +512,7 @@ async def download_images_concurrent(
 
     async def download_with_semaphore(url: str) -> MessageSegment | None:
         async with semaphore:
-            return await download_image_concurrent(url)
+            return await _download_single_image(url)
 
     # 创建所有下载任务
     tasks = [download_with_semaphore(url) for url in pic_urls]

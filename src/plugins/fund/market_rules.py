@@ -220,12 +220,19 @@ def is_off_market_fund(code: str) -> bool:
     - 40-49: 货币型
     - 50-89: 其他类型（指数型、QDII等）
 
+    注意：此函数会显式排除场内 ETF/LOF 代码（如 510300、160706），
+    确保调用顺序无关性。
+
     Args:
         code: 6位数字代码
 
     Returns:
         是否为场外基金
     """
+    # 先排除场内基金（ETF/LOF），确保不会误判
+    if code[:3] in ETF_PREFIXES_ALL or code[:3] in LOF_PREFIXES_ALL:
+        return False
+
     # 场外基金使用两位前缀（00-89）
     return code[:2] in OFF_MARKET_FUND_PREFIXES
 

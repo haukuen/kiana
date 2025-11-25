@@ -9,7 +9,6 @@
 """
 
 import time
-from typing import Any
 
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent
@@ -17,6 +16,11 @@ from nonebot.adapters.onebot.v11.exception import ActionFailed
 from nonebot.exception import IgnoredException
 from nonebot.matcher import Matcher
 from nonebot.message import run_postprocessor, run_preprocessor
+
+# 禁言状态缓存: {group_id: (check_timestamp, is_muted, mute_end_timestamp)}
+# 缓存有效期 60 秒，避免每条消息都调用 API
+_mute_cache: dict[int, tuple[float, bool, int]] = {}
+_CACHE_TTL = 60.0  # 缓存有效期（秒）
 
 
 @run_preprocessor
@@ -26,6 +30,8 @@ async def check_bot_mute_status(bot: Bot, event: MessageEvent, matcher: Matcher)
 
     在任何Matcher执行之前，检查bot在当前群组中是否被禁言。
     如果被禁言，则抛出IgnoredException跳过后续处理。
+
+    使用内存缓存减少 API 调用频率，每群每 60 秒最多查询一次。
 
     Args:
         bot: Bot实例
@@ -39,34 +45,53 @@ async def check_bot_mute_status(bot: Bot, event: MessageEvent, matcher: Matcher)
     if not isinstance(event, GroupMessageEvent):
         return
 
+    group_id = event.group_id
+    current_time = time.time()
+
+    # 检查缓存是否有效
+    if group_id in _mute_cache:
+        cache_time, is_muted, mute_end_timestamp = _mute_cache[group_id]
+
+        # 缓存未过期
+        if current_time - cache_time < _CACHE_TTL:
+            if is_muted and mute_end_timestamp > current_time:
+                remaining_minutes = int((mute_end_timestamp - current_time) // 60)
+                logger.debug(
+                    f"[缓存] 机器人在群 {group_id} 中被禁言，"
+                    f"剩余 {remaining_minutes} 分钟，跳过消息处理"
+                )
+                raise IgnoredException("Bot is muted in this group (cached)")
+            if not is_muted:
+                # 缓存显示未禁言，直接放行
+                return
+
+    # 缓存过期或不存在，重新查询
     try:
-        # 获取bot自己在群里的成员信息
         member_info = await bot.get_group_member_info(
-            group_id=event.group_id,
+            group_id=group_id,
             user_id=int(bot.self_id),
-            no_cache=True  # 不使用缓存，获取实时状态
+            no_cache=True
         )
 
-        # 检查禁言截止时间
         shut_up_timestamp = member_info.get("shut_up_timestamp", 0)
-        current_time = int(time.time())
+        is_muted = shut_up_timestamp > current_time
 
-        if shut_up_timestamp > current_time:
-            # bot被禁言，计算剩余禁言时间
+        # 更新缓存
+        _mute_cache[group_id] = (current_time, is_muted, shut_up_timestamp)
+
+        if is_muted:
             remaining_seconds = shut_up_timestamp - current_time
-            remaining_minutes = remaining_seconds // 60
+            remaining_minutes = int(remaining_seconds // 60)
 
             logger.warning(
-                f"检测到机器人在群 {event.group_id} 中被禁言，"
+                f"检测到机器人在群 {group_id} 中被禁言，"
                 f"剩余 {remaining_minutes} 分钟，跳过消息处理"
             )
-
-            # 抛出IgnoredException，阻止后续所有Matcher执行
             raise IgnoredException("Bot is muted in this group")
 
     except ActionFailed as e:
         # API调用失败，记录警告但不阻止正常流程
-        logger.warning(f"获取群成员信息失败 (群 {event.group_id}): {e}")
+        logger.warning(f"获取群成员信息失败 (群 {group_id}): {e}")
     except IgnoredException:
         # 重新抛出IgnoredException
         raise
