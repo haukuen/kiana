@@ -23,40 +23,14 @@ _BV_XOR = 23442827791579
 _BV_MASK = 2251799813685247  # (1 << 51) - 1
 _BV_MAX = 2251799813685248  # 1 << 51
 
-def normalize_video_id(text: str) -> str:
-    """标准化视频ID的大小写
+# BV/AV 号正则模式（从 _BV_TABLE 派生，确保一致性）
+_BASE58_CHARS = rf"[{_BV_TABLE}]"
+_BV_PATTERN_STR = rf"[Bb][Vv]{_BASE58_CHARS}{{10}}"
+_AV_PATTERN_STR = r"[Aa][Vv](\d+)"
 
-    将文本中的 BV/AV 号统一为标准格式：
-    - BV号：前缀大写 BV + 10位 Base58 字符（保持原样）
-    - AV号：前缀小写 av + 数字
-
-    注意：Base58 字符本身严格区分大小写，不应修改。
-    例如：'c' 和 'C' 在 Base58 编码中是不同的字符。
-
-    Args:
-        text: 包含视频ID的文本
-
-    Returns:
-        标准化后的文本
-
-    Examples:
-        >>> normalize_video_id("bv17hCTBxE6L")
-        "BV17hCTBxE6L"
-        >>> normalize_video_id("AV170001")
-        "av170001"
-        >>> normalize_video_id("Bv17hCTBxE6L")
-        "BV17hCTBxE6L"
-    """
-    # 标准化 BV 号前缀为大写（保持 Base58 字符原样）
-    # 使用 (?i) 标志进行大小写不敏感匹配前缀
-    text = re.sub(
-        r"\b[Bb][Vv]([FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf]{10})\b",
-        r"BV\1",
-        text,
-    )
-
-    # 标准化 AV 号前缀为小写，直接返回结果
-    return re.sub(r"\b[Aa][Vv](\d+)\b", r"av\1", text)
+# 编译的正则对象（用于内部搜索）
+_BV_REGEX = re.compile(_BV_PATTERN_STR)
+_AV_REGEX = re.compile(_AV_PATTERN_STR)
 
 
 def is_valid_bvid(bvid: str) -> bool:
@@ -104,16 +78,35 @@ def is_valid_bvid(bvid: str) -> bool:
         return False
 
 
-# Base58 字符集（新版）
-_BASE58_CHARS = r"[FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf]"
+def normalize_video_id(text: str) -> str:
+    """标准化视频ID的大小写
 
-# BV/AV 号核心正则模式（支持大小写不敏感匹配）
-_BV_PATTERN_STR = rf"[Bb][Vv]{_BASE58_CHARS}{{10}}"
-_AV_PATTERN_STR = r"[Aa][Vv](\d+)"
+    将文本中的 BV/AV 号统一为标准格式：
+    - BV号：前缀大写 BV + 10位 Base58 字符（保持原样）
+    - AV号：前缀小写 av + 数字
 
-# 编译的正则对象（用于内部搜索）
-_BV_REGEX = re.compile(_BV_PATTERN_STR)
-_AV_REGEX = re.compile(_AV_PATTERN_STR)
+    注意：Base58 字符本身严格区分大小写，不应修改。
+    例如：'c' 和 'C' 在 Base58 编码中是不同的字符。
+
+    Args:
+        text: 包含视频ID的文本
+
+    Returns:
+        标准化后的文本
+
+    Examples:
+        >>> normalize_video_id("bv17hCTBxE6L")
+        "BV17hCTBxE6L"
+        >>> normalize_video_id("AV170001")
+        "av170001"
+        >>> normalize_video_id("Bv17hCTBxE6L")
+        "BV17hCTBxE6L"
+    """
+    # 标准化 BV 号前缀为大写（保持 Base58 字符原样）
+    text = re.sub(rf"\b({_BV_PATTERN_STR})\b", lambda m: "BV" + m[1][2:], text)
+    # 标准化 AV 号前缀为小写
+    return re.sub(rf"\b{_AV_PATTERN_STR}\b", lambda m: "av" + m[1], text)
+
 
 # 匹配模式（基于 BV 号算法结构优化，复用核心模式）
 PATTERNS = {
