@@ -88,7 +88,7 @@ class DouyinParser:
             flags=re.DOTALL,
         )
         if not (find_res := pattern.search(text)) or not find_res[1]:
-            raise Exception("无法从页面提取视频信息")
+            raise ValueError("无法从页面提取视频信息")
 
         json_data = json.loads(find_res[1].strip())
 
@@ -100,13 +100,13 @@ class DouyinParser:
         elif note_id_page_key in json_data["loaderData"]:
             original_video_info = json_data["loaderData"][note_id_page_key]["videoInfoRes"]
         else:
-            raise Exception("无法解析视频信息")
+            raise ValueError("无法解析视频信息")
 
         if len(original_video_info["item_list"]) == 0:
             err_msg = "无法获取视频信息"
             if len(filter_list := original_video_info["filter_list"]) > 0:
                 err_msg = filter_list[0]["detail_msg"] or filter_list[0]["filter_reason"]
-            raise Exception(err_msg)
+            raise ValueError(err_msg)
 
         return original_video_info["item_list"][0]
 
@@ -117,7 +117,7 @@ class DouyinParser:
         else:
             iesdouyin_url = await get_redirect_url(share_url)
             if not (matched := re.search(r"(slides|video|note)/(\d+)", iesdouyin_url)):
-                raise Exception(f"无法从 {share_url} 中解析出 ID")
+                raise ValueError(f"无法从 {share_url} 中解析出 ID")
             _type, video_id = matched[1], matched[2]
             if _type == "slides":
                 return await self.parse_slides(video_id)
@@ -132,7 +132,7 @@ class DouyinParser:
             except Exception as e:
                 logger.warning(f"解析失败 {url[:60]}, error: {e}", exc_info=True)
                 continue
-        raise Exception("作品已删除，或资源直链获取失败, 请稍后再试")
+        raise RuntimeError("作品已删除，或资源直链获取失败, 请稍后再试")
 
     async def parse_slides(self, video_id: str) -> ParseResult:
         """解析多视频链接（如：视频合集、直播回放等）"""

@@ -184,7 +184,8 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
             url = await get_redirect_url(matched[0], headers=config.API_HEADERS)
             return await extract_video_id(url)
         case "BV":
-            bvid = matched[1]
+            # 规范化前缀为大写 BV（正则匹配时不区分大小写）
+            bvid = "BV" + matched[1][2:]
             if is_valid_bvid(bvid):
                 return "bvid", bvid
             logger.debug(f"无效的 BV 号: {bvid}")
@@ -194,7 +195,8 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
         case "bilibili":
             # 使用精确的 BV 号格式（Base58 + 固定位）
             if bv_match := _BV_REGEX.search(matched[0]):
-                bvid = bv_match[0]
+                # 规范化前缀为大写 BV
+                bvid = "BV" + bv_match[0][2:]
                 if is_valid_bvid(bvid):
                     return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")

@@ -50,8 +50,7 @@ def parse_card_message(event: MessageEvent) -> tuple[str | None, str | None]:
     card_data = None
     for seg in event.message:
         if seg.type == "json":
-            data = seg.data.get("data")
-            if data:
+            if data := seg.data.get("data"):
                 try:
                     card_data = json.loads(data) if isinstance(data, str) else data
                     break
@@ -378,9 +377,7 @@ async def _process_xiaohongshu_url(jump_url: str) -> str:
 
     # 提取笔记ID
     pattern = r"(?:/explore/|/discovery/item/|source=note&noteId=)(\w+)"
-    matched = re.search(pattern, jump_url)
-
-    if not matched:
+    if not (matched := re.search(pattern, jump_url)):
         # 如果无法提取ID，回退到原来的方法
         return await xiaohongshu.extract_url(jump_url)
 
@@ -397,11 +394,8 @@ async def _process_xiaohongshu_url(jump_url: str) -> str:
 
     # 构造完整URL
     if xsec_token:
-        final_url = f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}&xsec_token={xsec_token}"
-    else:
-        final_url = f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}"
-
-    return final_url
+        return f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}&xsec_token={xsec_token}"
+    return f"https://www.xiaohongshu.com/explore/{xhs_id}?xsec_source={xsec_source}"
 
 
 async def _download_single_image(pic_url: str) -> MessageSegment | None:
@@ -543,27 +537,20 @@ async def handle_xiaohongshu_message(
         info_text = f"{note_info['title']}\n作者: {note_info['author']}"
 
         # 2. 根据内容类型处理
+        media_segments: list[MessageSegment] = []
         if note_info["pic_urls"]:
             # 处理图片内容 - 使用并发下载提升性能
             pic_urls = note_info["pic_urls"][:9]  # 最多处理9张图片
             logger.info(f"图片数量{len(pic_urls)}张，使用并发下载（max_concurrent=5）")
-
-            image_segments = await download_images_concurrent(pic_urls, max_concurrent=5)
-            forward_nodes = create_forward_nodes(bot, info_text, image_segments)
-            await send_forward_message(bot, event, forward_nodes)
-
+            media_segments = await download_images_concurrent(pic_urls, max_concurrent=5)
         elif note_info["video_url"]:
             # 处理视频内容
             video_data = await download_media(note_info["video_url"])
-            video_segment = MessageSegment.video(video_data)
+            media_segments = [MessageSegment.video(video_data)]
 
-            forward_nodes = create_forward_nodes(bot, info_text, [video_segment])
-            await send_forward_message(bot, event, forward_nodes)
-
-        else:
-            # 处理纯文字内容
-            forward_nodes = create_forward_nodes(bot, info_text)
-            await send_forward_message(bot, event, forward_nodes)
+        # 统一发送转发消息
+        forward_nodes = create_forward_nodes(bot, info_text, media_segments or None)
+        await send_forward_message(bot, event, forward_nodes)
 
     except MatcherException:
         raise
