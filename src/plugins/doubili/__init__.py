@@ -158,24 +158,33 @@ _xiaohongshu_group_rule = create_platform_rule(lambda: config, "xiaohongshu")
 driver = get_driver()
 
 
-def _log_video_processing(
-    platform: str, event: MessageEvent, video_id: str, id_type: str = "", url_type: str = "视频ID"
+def _log_matcher_event(
+    platform: str,
+    event: MessageEvent,
+    content_id: str | None = None,
+    id_type: str = "",
+    success: bool = True,
+    message: str = "",
 ) -> None:
-    """统一视频处理监控日志
+    """统一 Matcher 事件日志
 
     Args:
         platform: 平台名称 (Bilibili/Douyin/Xiaohongshu)
         event: 消息事件
-        video_id: 视频ID或URL
+        content_id: 内容ID或URL（成功时必填）
         id_type: ID类型 (bvid/avid/等)，为空则不显示
-        url_type: ID类型描述 (视频ID/URL)
+        success: 是否成功提取
+        message: 额外信息（失败时的原因等）
     """
     group_id = event.group_id if isinstance(event, GroupMessageEvent) else "私聊"
-    id_info = f" ({id_type})" if id_type else ""
-    logger.info(
-        f"处理{platform}链接 | 用户: {event.user_id} | 群组: {group_id} | "
-        f"{url_type}: {video_id}{id_info}"
-    )
+    base_info = f"{platform} | 用户: {event.user_id} | 群组: {group_id}"
+
+    if success and content_id:
+        id_info = f" ({id_type})" if id_type else ""
+        logger.info(f"处理{base_info} | ID: {content_id}{id_info}")
+    else:
+        extra = f" | {message}" if message else ""
+        logger.debug(f"跳过{base_info}{extra}")
 
 
 async def is_bilibili_link(event: MessageEvent, state: T_State) -> bool:
@@ -213,20 +222,14 @@ async def handle_bilibili_message(
     state: T_State,
 ):
     """处理Bilibili消息"""
-    # 记录原始消息用于调试
-    group_id = event.group_id if isinstance(event, GroupMessageEvent) else "私聊"
-    logger.debug(
-        f"Bilibili匹配触发 | 用户: {event.user_id} | 群组: {group_id} | 原始消息: {event.message}"
-    )
-
     # 优先使用检查阶段缓存的卡片URL，回退到原始消息
     text_to_parse = state.get("card_url") or str(event.message).strip()
     id_type, video_id = await bilibili.extract_video_id(text_to_parse)
     if not video_id:
-        logger.debug("未提取到有效的视频ID，跳过处理")
+        _log_matcher_event("Bilibili", event, success=False, message="未提取到视频ID")
         return
 
-    _log_video_processing("Bilibili", event, video_id, id_type)
+    _log_matcher_event("Bilibili", event, video_id, id_type)
 
     try:
         # 1. 获取视频流信息
@@ -298,9 +301,10 @@ async def handle_douyin_message(
     video_id = await douyin.extract_video_id(message)
 
     if not video_id:
+        _log_matcher_event("Douyin", event, success=False, message="未提取到视频ID")
         await douyin_matcher.finish("未找到有效的视频链接")
 
-    _log_video_processing("Douyin", event, video_id)
+    _log_matcher_event("Douyin", event, video_id)
 
     try:
         # 1. 获取视频信息
@@ -525,9 +529,10 @@ async def handle_xiaohongshu_message(
         url = await xiaohongshu.extract_url(message)
 
     if not url:
+        _log_matcher_event("Xiaohongshu", event, success=False, message="未提取到笔记链接")
         await xiaohongshu_matcher.finish("未找到有效的笔记链接")
 
-    _log_video_processing("Xiaohongshu", event, f"{url[:50]}...", url_type="URL")
+    _log_matcher_event("Xiaohongshu", event, f"{url[:50]}...", id_type="URL")
 
     try:
         # 1. 获取笔记信息
