@@ -4,7 +4,7 @@ import json
 import re
 from io import BytesIO
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from httpx import AsyncClient
@@ -13,6 +13,7 @@ from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, Me
 from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+from nonebot.typing import T_State
 
 from ..group_permission import create_platform_rule
 from . import bilibili, douyin, xiaohongshu
@@ -27,133 +28,94 @@ __plugin_meta__ = PluginMetadata(
 
 config = get_plugin_config(Config)
 
-# JSON CQ码提取正则（限制长度防止 ReDoS）
-_JSON_CARD_PATTERN = re.compile(r"\[CQ:json,data=([^\]]{1,10000})\]")
+def parse_card_message(event: MessageEvent) -> tuple[str | None, str | None]:
+    """从腾讯卡片消息提取链接和标题（统一解析入口）
 
+    从 MessageSegment 中提取 JSON 卡片数据，根据 app 字段分流解析。
 
-def parse_json_card_from_segment(event: MessageEvent) -> dict | None:
-    """从 MessageSegment 解析 JSON 卡片（官方推荐方式）
-
-    直接从消息段对象中提取 JSON 数据，无需处理 CQ 码转义。
+    支持的卡片类型：
+    - com.tencent.miniapp_01 (小程序): meta.detail_1.qqdocurl
+    - com.tencent.tuwen.lua (图文分享): meta.{view}.jumpUrl
+    - com.tencent.music.lua (音乐分享): meta.{view}.jumpUrl
+    - com.tencent.structmsg (结构化消息): meta.{view}.jumpUrl
+    - com.tencent.channel.share (频道分享): meta.detail.link
 
     Args:
         event: 消息事件
 
     Returns:
-        解析后的 JSON 对象，解析失败返回 None
+        (url, title) 元组，未找到返回 (None, None)
     """
+    # 从 MessageSegment 提取 JSON 卡片数据
+    card_data = None
     for seg in event.message:
         if seg.type == "json":
             data = seg.data.get("data")
             if data:
                 try:
-                    result = json.loads(data) if isinstance(data, str) else data
-                    logger.debug("JSON卡片解析 - 使用 MessageSegment 方式成功")
-                    return result
+                    card_data = json.loads(data) if isinstance(data, str) else data
+                    break
                 except json.JSONDecodeError as e:
-                    logger.debug(f"JSON卡片解析 - MessageSegment 方式 JSON 解码失败: {e}")
-    return None
+                    logger.debug(f"JSON卡片解析失败: {e}")
 
+    if not card_data:
+        return (None, None)
 
-def parse_json_card_from_cqcode(message: str) -> dict | None:
-    """从 CQ 码解析 JSON 卡片（回退方式）
-
-    处理常见的转义字符（如 &#44;）和 URL 编码。
-
-    Args:
-        message: 包含 [CQ:json,data=...] 的消息文本
-
-    Returns:
-        解析后的 JSON 对象，解析失败返回 None
-    """
-    if "CQ:json" not in message:
-        return None
-
-    try:
-        if not (match := _JSON_CARD_PATTERN.search(message)):
-            return None
-
-        json_str = match[1]
-        # 处理转义字符：&#44; → ,
-        json_str = json_str.replace("&#44;", ",")
-        # 处理 URL 编码
-        json_str = unquote(json_str)
-
-        result = json.loads(json_str)
-        logger.debug("JSON卡片解析 - 使用 CQ码正则 回退方式成功")
-        return result
-
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.debug(f"JSON卡片解析 - CQ码正则 方式失败: {e}")
-        return None
-
-
-def parse_json_card(event_or_message: MessageEvent | str) -> dict | None:
-    """解析 JSON 卡片消息（优先官方方式，失败回退 CQ 码）
-
-    Args:
-        event_or_message: MessageEvent 对象或消息字符串
-
-    Returns:
-        解析后的 JSON 对象，解析失败返回 None
-    """
-    # 优先使用 MessageSegment 官方方式
-    if isinstance(event_or_message, MessageEvent):
-        if (result := parse_json_card_from_segment(event_or_message)) is not None:
-            return result
-        # 回退到 CQ 码方式
-        message = str(event_or_message.message)
-    else:
-        message = event_or_message
-
-    # CQ 码方式（回退或直接传入字符串的情况）
-    if (result := parse_json_card_from_cqcode(message)) is not None:
-        return result
-
-    logger.debug("JSON卡片解析 - 两种方式均失败")
-    return None
-
-
-def extract_url_from_qq_card(card_data: dict) -> str | None:
-    """从 QQ 卡片中提取 URL（支持多种卡片类型）
-
-    支持的卡片类型：
-    - com.tencent.tuwen.lua (图文分享): meta.news.jumpUrl
-    - com.tencent.miniapp_01 (小程序): meta.detail_1.qqdocurl
-
-    Args:
-        card_data: 解析后的 JSON 卡片数据
-
-    Returns:
-        提取到的 URL，未找到返回 None
-    """
-    app_type = card_data.get("app", "")
+    app = card_data.get("app", "")
     meta = card_data.get("meta", {})
+    view = card_data.get("view", "")
 
-    if not meta:
-        logger.debug(f"QQ卡片URL提取 - meta 为空，app={app_type}")
-        return None
+    url, title = None, None
 
-    url = None
+    match app:
+        case "com.tencent.miniapp_01":
+            # 小程序卡片
+            detail = meta.get("detail_1", {})
+            url = detail.get("qqdocurl") or detail.get("url")
+            title = detail.get("desc") or detail.get("title")
+            if url:
+                logger.debug(f"腾讯卡片解析 - 小程序卡片，app={app}")
 
-    # 图文分享 (com.tencent.tuwen.lua) / 结构化消息 (com.tencent.structmsg)
-    if news := meta.get("news"):
-        url = news.get("jumpUrl")
-        if url:
-            logger.debug(f"QQ卡片URL提取 - 从 meta.news.jumpUrl 提取成功，app={app_type}")
+        case "com.tencent.tuwen.lua" | "com.tencent.music.lua":
+            # 图文/音乐分享
+            view_data = meta.get(view, {}) if view else meta.get("news", {})
+            url = view_data.get("jumpUrl")
+            title = view_data.get("title")
+            if url:
+                logger.debug(f"腾讯卡片解析 - 图文/音乐分享，app={app}, view={view}")
 
-    # 小程序分享 (com.tencent.miniapp_01)
-    if not url and (detail := meta.get("detail_1")):
-        url = detail.get("qqdocurl") or detail.get("jumpUrl")
-        if url:
-            logger.debug(f"QQ卡片URL提取 - 从 meta.detail_1 提取成功，app={app_type}")
+        case "com.tencent.structmsg":
+            # 结构化消息（旧版协议）
+            view_data = meta.get(view, {}) if view else meta.get("news", {})
+            url = view_data.get("jumpUrl")
+            title = view_data.get("title")
+            if url:
+                logger.debug(f"腾讯卡片解析 - 结构化消息，app={app}, view={view}")
 
+        case "com.tencent.channel.share":
+            # 频道分享
+            detail = meta.get("detail", {})
+            url = detail.get("link")
+            title = detail.get("title")
+            if url:
+                logger.debug(f"腾讯卡片解析 - 频道分享，app={app}")
+
+        case _:
+            # 通用回退：尝试 news 路径
+            if news := meta.get("news"):
+                url = news.get("jumpUrl")
+                title = news.get("title")
+                if url:
+                    logger.debug(f"腾讯卡片解析 - 通用回退(news)，app={app}")
+
+    # 处理反斜杠转义
     if url:
-        # 处理反斜杠转义
-        return url.replace("\\", "/")
+        url = url.replace("\\", "/")
 
-    logger.debug(f"QQ卡片URL提取 - 未找到 URL，app={app_type}, meta keys={list(meta.keys())}")
-    return None
+    if not url:
+        logger.debug(f"腾讯卡片解析 - 未找到 URL，app={app}, meta keys={list(meta.keys())}")
+
+    return (url, title)
 
 
 async def get_redirect_url(url: str, timeout: float = 10.0) -> str:
@@ -216,23 +178,21 @@ def _log_video_processing(
     )
 
 
-async def is_bilibili_link(event: MessageEvent) -> bool:
-    """检查是否为B站链接（仅内容检查）"""
-    # 根据消息类型选择检查方式
-    has_json = any(seg.type == "json" for seg in event.message)
-    has_text = any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message)
+async def is_bilibili_link(event: MessageEvent, state: T_State) -> bool:
+    """检查是否为B站链接（仅内容检查）
 
-    # 检查 JSON 卡片
-    if has_json:
-        json_data = parse_json_card(event)
-        if json_data and "meta" in json_data and "detail_1" in json_data["meta"]:
-            detail = json_data["meta"]["detail_1"]
-            # 验证 appid 是 B站的
-            if detail.get("appid") == "1109937557":
-                return True
+    检测阶段提取的 URL 会存入 state["card_url"]，避免处理阶段重复解析。
+    """
+    # 1. 尝试卡片消息
+    if any(seg.type == "json" for seg in event.message):
+        url, title = parse_card_message(event)
+        if url and ("bilibili.com" in url or "b23.tv" in url):
+            state["card_url"] = url
+            state["card_title"] = title
+            return True
 
-    # 检查普通文本链接
-    if has_text:
+    # 2. 尝试文本消息
+    if any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message):
         message = event.get_plaintext().strip()
         return any(pattern.search(message) for pattern in bilibili.PATTERNS.values())
 
@@ -250,17 +210,18 @@ bilibili_matcher = on_message(
 async def handle_bilibili_message(
     bot: Bot,
     event: MessageEvent,
+    state: T_State,
 ):
     """处理Bilibili消息"""
-    message = str(event.message).strip()
-
-    # 记录原始消息用于调试（无长度限制）
+    # 记录原始消息用于调试
     group_id = event.group_id if isinstance(event, GroupMessageEvent) else "私聊"
     logger.debug(
-        f"Bilibili匹配触发 | 用户: {event.user_id} | 群组: {group_id} | 原始消息: {message}"
+        f"Bilibili匹配触发 | 用户: {event.user_id} | 群组: {group_id} | 原始消息: {event.message}"
     )
 
-    id_type, video_id = await bilibili.extract_video_id(message)
+    # 优先使用检查阶段缓存的卡片URL，回退到原始消息
+    text_to_parse = state.get("card_url") or str(event.message).strip()
+    id_type, video_id = await bilibili.extract_video_id(text_to_parse)
     if not video_id:
         logger.debug("未提取到有效的视频ID，跳过处理")
         return
@@ -299,24 +260,21 @@ async def is_douyin_link(event: MessageEvent) -> bool:
     return any(pattern.search(message) for pattern in douyin.PATTERNS.values())
 
 
-async def is_xiaohongshu_link(event: MessageEvent) -> bool:
-    """检查是否为小红书链接（仅内容检查）"""
-    # 根据消息类型选择检查方式
-    has_json = any(seg.type == "json" for seg in event.message)
-    has_text = any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message)
+async def is_xiaohongshu_link(event: MessageEvent, state: T_State) -> bool:
+    """检查是否为小红书链接（仅内容检查）
 
-    # 检查 JSON 卡片（检测阶段不要求 cookie，处理阶段再验证）
-    if has_json:
-        json_data = parse_json_card(event)
-        if json_data:
-            # 使用通用函数提取 URL（支持多种卡片类型）
-            jump_url = extract_url_from_qq_card(json_data)
-            # 验证是否包含小红书域名
-            if jump_url and ("xiaohongshu.com" in jump_url or "xhslink.com" in jump_url):
-                return True
+    检测阶段提取的 URL 会存入 state["card_url"]，避免处理阶段重复解析。
+    """
+    # 1. 尝试卡片消息（检测阶段不要求 cookie，处理阶段再验证）
+    if any(seg.type == "json" for seg in event.message):
+        url, title = parse_card_message(event)
+        if url and ("xiaohongshu.com" in url or "xhslink.com" in url):
+            state["card_url"] = url
+            state["card_title"] = title
+            return True
 
-    # 检查普通文本链接
-    if has_text:
+    # 2. 尝试文本消息
+    if any(seg.type == "text" and seg.data.get("text", "").strip() for seg in event.message):
         message = event.get_plaintext().strip()
         return any(pattern.search(message) for pattern in xiaohongshu.PATTERNS.values())
 
@@ -393,29 +351,8 @@ xiaohongshu_matcher = on_message(
 )
 
 
-async def extract_url_from_card_message(event_or_message: MessageEvent | str) -> str:
-    """从卡片消息中提取小红书URL
-
-    注意: 调用此函数前应确保已通过 is_xiaohongshu_link 检查 cookie 配置
-    """
-    # 使用工具函数解析 JSON 卡片（支持 event 和字符串）
-    json_data = parse_json_card(event_or_message)
-    if not json_data:
-        return ""
-
-    # 使用通用函数提取 URL（支持多种卡片类型）
-    jump_url = extract_url_from_qq_card(json_data)
-    if not jump_url:
-        return ""
-
-    if "xiaohongshu.com" not in jump_url and "xhslink.com" not in jump_url:
-        return ""
-
-    return await process_xiaohongshu_url(jump_url)
-
-
-async def process_xiaohongshu_url(jump_url: str) -> str:
-    """处理小红书URL，包括短链接解析和参数提取"""
+async def _process_xiaohongshu_url(jump_url: str) -> str:
+    """处理小红书URL，包括短链接解析和参数提取（内部函数）"""
     # 处理短链接
     if "xhslink" in jump_url:
         # 基础安全检查
@@ -569,18 +506,22 @@ def create_forward_nodes(
 async def handle_xiaohongshu_message(
     bot: Bot,
     event: MessageEvent,
+    state: T_State,
 ):
     """处理小红书消息"""
     # 处理阶段检查 cookie 配置
     if not config.xiaohongshu_cookie:
         await xiaohongshu_matcher.finish("未配置小红书 cookie，无法解析笔记内容")
 
-    message = str(event.message).strip()
+    url = ""
 
-    # 先尝试从卡片消息中提取URL（传入 event 以使用官方方式）
-    url = await extract_url_from_card_message(event)
+    # 优先使用检查阶段缓存的卡片URL（避免重复解析）
+    if card_url := state.get("card_url"):
+        url = await _process_xiaohongshu_url(card_url)
 
+    # 回退到纯文本提取
     if not url:
+        message = str(event.message).strip()
         url = await xiaohongshu.extract_url(message)
 
     if not url:
