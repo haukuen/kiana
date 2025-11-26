@@ -1,7 +1,4 @@
-import html
-import json
 import re
-from urllib.parse import unquote
 
 from httpx import AsyncClient
 from nonebot import get_plugin_config, logger
@@ -25,10 +22,6 @@ _BV_S = [0, 1, 2, 9, 7, 5, 6, 4, 8, 3, 10, 11]  # 12位全编码映射
 _BV_XOR = 23442827791579
 _BV_MASK = 2251799813685247  # (1 << 51) - 1
 _BV_MAX = 2251799813685248  # 1 << 51
-
-# JSON 小程序消息正则（限制长度防止 ReDoS 攻击）
-_JSON_CQ_PATTERN = re.compile(r"\[CQ:json,data=([^\]]{1,10000})\]")
-
 
 def normalize_video_id(text: str) -> str:
     """标准化视频ID的大小写
@@ -140,43 +133,6 @@ PATTERNS = {
 }
 
 
-async def _extract_from_json(text: str) -> tuple[str, str]:
-    """从JSON小程序中提取视频ID"""
-    try:
-        # 增强的JSON解析，支持多种转义格式
-        if not (json_str := _JSON_CQ_PATTERN.search(text)):
-            return "", ""
-        # 使用 html.unescape() 解码所有 HTML 实体（&#44;、&#91;、&amp; 等）
-        decoded_data = html.unescape(unquote(json_str[1]))
-        json_data = json.loads(decoded_data)
-        detail = json_data["meta"]["detail_1"]
-        if "qqdocurl" in detail:
-            doc_url = detail["qqdocurl"]
-            logger.debug(f"提取到 qqdocurl: {doc_url}")
-
-            # 大小写标准化：统一 URL 中的 BV/AV 前缀
-            doc_url = normalize_video_id(doc_url)
-
-            if "b23.tv" in doc_url or "bili2233.cn" in doc_url:
-                try:
-                    url = await get_redirect_url(doc_url, config.API_HEADERS)
-                    return await extract_video_id(url)
-                except Exception as e:
-                    logger.error(f"短链接重定向失败，尝试直接解析: {e}")
-                    # 重定向失败，尝试直接从URL提取
-            # 使用精确的 BV 号格式（Base58 + 固定位）
-            if bv_match := _BV_REGEX.search(doc_url):
-                bvid = bv_match[0]
-                if is_valid_bvid(bvid):
-                    return "bvid", bvid
-                logger.debug(f"无效的 BV 号: {bvid}")
-            if av_match := _AV_REGEX.search(doc_url):
-                return "avid", av_match[1]
-    except Exception as e:
-        logger.error(f"解析小程序数据失败: {type(e).__name__}: {e}", exc_info=True)
-    return "", ""
-
-
 async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
     """从URL中提取视频ID"""
     match key:
@@ -185,7 +141,7 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
             return await extract_video_id(url)
         case "BV":
             # 规范化前缀为大写 BV（正则匹配时不区分大小写）
-            bvid = "BV" + matched[1][2:]
+            bvid = normalize_video_id(matched[1])
             if is_valid_bvid(bvid):
                 return "bvid", bvid
             logger.debug(f"无效的 BV 号: {bvid}")
@@ -196,7 +152,7 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
             # 使用精确的 BV 号格式（Base58 + 固定位）
             if bv_match := _BV_REGEX.search(matched[0]):
                 # 规范化前缀为大写 BV
-                bvid = "BV" + bv_match[0][2:]
+                bvid = normalize_video_id(bv_match[0])
                 if is_valid_bvid(bvid):
                     return "bvid", bvid
                 logger.debug(f"无效的 BV 号: {bvid}")
@@ -207,11 +163,6 @@ async def _extract_from_url(matched: re.Match, key: str) -> tuple[str, str]:
 
 async def extract_video_id(text: str) -> tuple[str, str]:
     """从文本中提取视频ID"""
-    if "CQ:json" in text:
-        result = await _extract_from_json(text)
-        if result != ("", ""):
-            return result
-
     for key, pattern in PATTERNS.items():
         if matched := pattern.search(text):
             result = await _extract_from_url(matched, key)
