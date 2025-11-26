@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from httpx import AsyncClient
-from nonebot import get_driver, get_plugin_config, logger, on_message
+from nonebot import get_plugin_config, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, MessageSegment
 from nonebot.exception import MatcherException
 from nonebot.plugin import PluginMetadata
@@ -153,9 +153,6 @@ async def download_media(url: str, headers: dict | None = None) -> BytesIO:
 _bilibili_group_rule = create_platform_rule(lambda: config, "bilibili")
 _douyin_group_rule = create_platform_rule(lambda: config, "douyin")
 _xiaohongshu_group_rule = create_platform_rule(lambda: config, "xiaohongshu")
-
-
-driver = get_driver()
 
 
 def _log_matcher_event(
