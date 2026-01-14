@@ -918,7 +918,10 @@ async def handle_manage_collection(bot: Bot, event: GroupMessageEvent) -> None:
     is_new_collection = len(existing_members) == 0
     max_members = config.max_collection_members
 
-    if len(existing_members) + len(user_ids) > max_members:
+    existing_set = set(existing_members)
+    new_user_count = sum(1 for uid in user_ids if uid not in existing_set)
+
+    if len(existing_members) + new_user_count > max_members:
         await manage_collection_matcher.finish(f"集合成员数超过上限（最多{max_members}人）")
         return
 
