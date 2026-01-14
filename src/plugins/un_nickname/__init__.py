@@ -22,8 +22,8 @@ from .config import Config
 
 __plugin_meta__ = PluginMetadata(
     name="un_nickname",
-    description="存储和管理群成员昵称",
-    usage="@某人 昵称 xxx\n发送'at昵称'即可触发@\n删除昵称 @某人\n清空昵称 @某人",
+    description="存储和管理群成员昵称和集合",
+    usage="@某人 昵称 xxx\n发送'at昵称'即可触发@\n删除昵称 @某人\n清空昵称 @某人\n集合 xxx @人 创建/添加成员\n集合 xxx 查看成员\n集合列表\n移除集合 xxx @人\n删除集合 xxx",
     config=Config,
 )
 
@@ -44,11 +44,25 @@ db.ensure_schema(
         CREATE INDEX IF NOT EXISTS idx_nicknames_group_nickname
         ON nicknames (group_id, nickname)
         """,
+        """
+        CREATE TABLE IF NOT EXISTS nickname_collections (
+            group_id TEXT NOT NULL,
+            collection_name TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            PRIMARY KEY (group_id, collection_name, user_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collections_group_name
+        ON nickname_collections (group_id, collection_name)
+        """,
     ]
 )
 
 # 昵称映射缓存: {group_id: (expires_at, {nickname: user_id})}
 _nickname_cache: dict[str, tuple[float, dict[str, str]]] = {}
+# 集合缓存: {group_id: (expires_at, {collection_name: list[user_id]})}
+_collection_cache: dict[str, tuple[float, dict[str, list[str]]]] = {}
 # 分群锁，避免跨群阻塞
 # 注意：锁一旦创建就不会被删除，因为清理锁会引入复杂的竞态条件问题。
 # 锁对象非常轻量，且实际使用中群组数量通常是有限的，内存开销可忽略不计。
@@ -89,6 +103,9 @@ async def _invalidate_cache(group_id: str) -> None:
         if group_id in _nickname_cache:
             del _nickname_cache[group_id]
             logger.debug(f"已清除群组 {group_id} 的昵称缓存")
+        if group_id in _collection_cache:
+            del _collection_cache[group_id]
+            logger.debug(f"已清除群组 {group_id} 的集合缓存")
 
 
 async def _get_cached_nickname_map(group_id: str) -> dict[str, str]:
@@ -122,6 +139,30 @@ async def _get_cached_nickname_map(group_id: str) -> dict[str, str]:
         logger.debug(f"已缓存群组 {group_id} 的 {len(nickname_to_qq)} 个昵称映射，TTL={ttl}s")
 
         return nickname_to_qq
+
+
+async def _get_cached_collection_map(group_id: str) -> dict[str, list[str]]:
+    """获取群组的集合映射（带缓存）"""
+    cached = _collection_cache.get(group_id)
+    if cached and time() < cached[0]:
+        logger.debug(f"使用群组 {group_id} 的集合缓存")
+        return cached[1]
+
+    lock = await _get_group_lock(group_id)
+    async with lock:
+        cached = _collection_cache.get(group_id)
+        if cached and time() < cached[0]:
+            logger.debug(f"使用群组 {group_id} 的集合缓存（锁内）")
+            return cached[1]
+
+        logger.debug(f"从数据库查询群组 {group_id} 的集合映射")
+        collection_map = await fetch_all_collections_map(group_id)
+
+        ttl = CACHE_TTL if collection_map else EMPTY_CACHE_TTL
+        _collection_cache[group_id] = (time() + ttl, collection_map)
+        logger.debug(f"已缓存群组 {group_id} 的 {len(collection_map)} 个集合映射，TTL={ttl}s")
+
+        return collection_map
 
 
 def is_adding_nickname(event: GroupMessageEvent) -> bool:
@@ -175,6 +216,16 @@ def validate_nickname(nickname: str) -> str | None:
         return f"昵称过长（最多{config.max_nickname_length}字符）"
     if not is_valid_nickname(nickname):
         return "昵称只能包含汉字、字母和数字！"
+    return None
+
+
+def validate_collection_name(name: str) -> str | None:
+    if not name:
+        return "集合名不能为空！"
+    if len(name) > config.max_collection_name_length:
+        return f"集合名过长（最多{config.max_collection_name_length}字符）"
+    if not is_valid_nickname(name):
+        return "集合名只能包含汉字、字母和数字！"
     return None
 
 
@@ -277,6 +328,199 @@ async def clear_user_nicknames(group_id: str, user_id: str) -> list[str]:
     return nicknames
 
 
+async def name_exists_as_nickname(group_id: str, name: str) -> bool:
+    """检查名称是否已被昵称占用"""
+    row = await db.fetch_one(
+        "SELECT 1 FROM nicknames WHERE group_id = ? AND nickname = ? LIMIT 1",
+        (group_id, name),
+    )
+    return row is not None
+
+
+async def name_exists_as_collection(group_id: str, name: str) -> bool:
+    """检查名称是否已被集合占用"""
+    row = await db.fetch_one(
+        "SELECT 1 FROM nickname_collections WHERE group_id = ? AND collection_name = ? LIMIT 1",
+        (group_id, name),
+    )
+    return row is not None
+
+
+async def fetch_all_collections_map(group_id: str) -> dict[str, list[str]]:
+    """获取群组的所有集合映射 {collection_name: [user_ids]}"""
+    rows = await db.fetch_all(
+        """
+        SELECT collection_name, user_id
+        FROM nickname_collections
+        WHERE group_id = ?
+        ORDER BY collection_name
+        """,
+        (group_id,),
+    )
+    mapping: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        mapping[row["collection_name"]].append(row["user_id"])
+    return mapping
+
+
+async def fetch_collection_members(group_id: str, collection_name: str) -> list[str]:
+    """获取指定集合的成员列表"""
+    rows = await db.fetch_all(
+        """
+        SELECT user_id
+        FROM nickname_collections
+        WHERE group_id = ? AND collection_name = ?
+        """,
+        (group_id, collection_name),
+    )
+    return [row["user_id"] for row in rows]
+
+
+async def fetch_all_collections_summary(group_id: str) -> list[tuple[str, int]]:
+    """获取群组所有集合的名称和成员数"""
+    rows = await db.fetch_all(
+        """
+        SELECT collection_name, COUNT(*) as member_count
+        FROM nickname_collections
+        WHERE group_id = ?
+        GROUP BY collection_name
+        ORDER BY collection_name
+        """,
+        (group_id,),
+    )
+    return [(row["collection_name"], row["member_count"]) for row in rows]
+
+
+async def add_collection_members(
+    group_id: str, collection_name: str, user_ids: list[str]
+) -> tuple[list[str], list[str]]:
+    """向集合添加成员，返回 (新增成功列表, 已存在列表)"""
+    added: list[str] = []
+    already_exists: list[str] = []
+
+    for user_id in user_ids:
+        try:
+            await db.execute(
+                """
+                INSERT INTO nickname_collections (group_id, collection_name, user_id)
+                VALUES (?, ?, ?)
+                """,
+                (group_id, collection_name, user_id),
+            )
+            added.append(user_id)
+        except sqlite3.IntegrityError:
+            already_exists.append(user_id)
+
+    if added:
+        await _invalidate_cache(group_id)
+
+    return added, already_exists
+
+
+async def remove_collection_members(
+    group_id: str, collection_name: str, user_ids: list[str]
+) -> tuple[list[str], list[str], bool]:
+    """从集合移除成员，返回 (成功移除列表, 不存在列表, 集合是否已删除)"""
+    removed: list[str] = []
+    not_found: list[str] = []
+
+    for user_id in user_ids:
+        existing = await db.fetch_one(
+            """
+            SELECT 1 FROM nickname_collections
+            WHERE group_id = ? AND collection_name = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (group_id, collection_name, user_id),
+        )
+        if existing:
+            await db.execute(
+                """
+                DELETE FROM nickname_collections
+                WHERE group_id = ? AND collection_name = ? AND user_id = ?
+                """,
+                (group_id, collection_name, user_id),
+            )
+            removed.append(user_id)
+        else:
+            not_found.append(user_id)
+
+    collection_deleted = False
+    if removed:
+        remaining = await db.fetch_one(
+            """
+            SELECT 1 FROM nickname_collections
+            WHERE group_id = ? AND collection_name = ?
+            LIMIT 1
+            """,
+            (group_id, collection_name),
+        )
+        if not remaining:
+            collection_deleted = True
+        await _invalidate_cache(group_id)
+
+    return removed, not_found, collection_deleted
+
+
+async def delete_collection(group_id: str, collection_name: str) -> list[str]:
+    """删除整个集合，返回被删除的成员列表"""
+    members = await fetch_collection_members(group_id, collection_name)
+    if not members:
+        return []
+
+    await db.execute(
+        """
+        DELETE FROM nickname_collections
+        WHERE group_id = ? AND collection_name = ?
+        """,
+        (group_id, collection_name),
+    )
+    await _invalidate_cache(group_id)
+    return members
+
+
+async def remove_user_from_all_collections(group_id: str, user_id: str) -> list[str]:
+    """从群组所有集合中移除用户，返回受影响的集合名列表，并自动删除空集合"""
+    rows = await db.fetch_all(
+        """
+        SELECT collection_name
+        FROM nickname_collections
+        WHERE group_id = ? AND user_id = ?
+        """,
+        (group_id, user_id),
+    )
+    affected_collections = [row["collection_name"] for row in rows]
+
+    if not affected_collections:
+        return []
+
+    await db.execute(
+        """
+        DELETE FROM nickname_collections
+        WHERE group_id = ? AND user_id = ?
+        """,
+        (group_id, user_id),
+    )
+
+    deleted_collections: list[str] = []
+    for collection_name in affected_collections:
+        remaining = await db.fetch_one(
+            """
+            SELECT 1 FROM nickname_collections
+            WHERE group_id = ? AND collection_name = ?
+            LIMIT 1
+            """,
+            (group_id, collection_name),
+        )
+        if not remaining:
+            deleted_collections.append(collection_name)
+
+    if affected_collections:
+        await _invalidate_cache(group_id)
+
+    return deleted_collections
+
+
 @add_nickname_matcher.handle()
 async def handle_add_nickname(bot: Bot, event: GroupMessageEvent) -> None:
     msg = event.message
@@ -299,6 +543,10 @@ async def handle_add_nickname(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     group_id = str(event.group_id)
+
+    if await name_exists_as_collection(group_id, nickname):
+        await add_nickname_matcher.finish(f"名称「{nickname}」已被集合占用!")
+        return
 
     occupied_user_id = await nickname_occupied(group_id, nickname, at_qq)
     if occupied_user_id:
@@ -325,11 +573,33 @@ async def handle_add_nickname(bot: Bot, event: GroupMessageEvent) -> None:
 replace_nickname_matcher = on_message(rule=is_replacing_nickname, priority=10, block=False)
 
 
+def _resolve_at_target(
+    name: str,
+    sender_id: str,
+    nickname_to_qq: dict[str, str],
+    collection_to_users: dict[str, list[str]],
+) -> list[MessageSegment] | None:
+    """解析 at 目标，返回消息段列表或 None（未找到）"""
+    qq = nickname_to_qq.get(name)
+    if qq:
+        return [MessageSegment.at(qq)]
+
+    members = collection_to_users.get(name)
+    if members:
+        filtered = [uid for uid in members if uid != sender_id]
+        if filtered:
+            return [MessageSegment.at(uid) for uid in filtered]
+
+    return None
+
+
 @replace_nickname_matcher.handle()
 async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
     """处理昵称替换，将 'at昵称' 替换为实际的 @mentions"""
     group_id = str(event.group_id)
+    sender_id = str(event.user_id)
     nickname_to_qq = await _get_cached_nickname_map(group_id)
+    collection_to_users = await _get_cached_collection_map(group_id)
 
     original_msg = event.message
     new_msg = Message()
@@ -341,17 +611,18 @@ async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
             continue
 
         text = seg.data["text"]
-        parts = []
+        parts: list[MessageSegment] = []
         last_pos = 0
 
         for match in AT_NICKNAME_PATTERN.finditer(text):
             start, end = match.span()
             if start > last_pos:
                 parts.append(MessageSegment.text(text[last_pos:start]))
-            nickname = match.group(1)
-            qq = nickname_to_qq.get(nickname)
-            if qq:
-                parts.append(MessageSegment.at(qq))
+
+            name = match.group(1)
+            at_segments = _resolve_at_target(name, sender_id, nickname_to_qq, collection_to_users)
+            if at_segments:
+                parts.extend(at_segments)
                 replaced = True
             else:
                 parts.append(MessageSegment.text(match.group()))
@@ -523,3 +794,253 @@ async def handle_group_decrease(bot: Bot, event: GroupDecreaseNoticeEvent) -> No
         logger.info(
             f"用户 {user_id} 退出群 {group_id}，已自动清理其昵称: {', '.join(cleared_nicknames)}"
         )
+
+    deleted_collections = await remove_user_from_all_collections(group_id, user_id)
+    if deleted_collections:
+        logger.info(
+            f"用户 {user_id} 退出群 {group_id}，已从集合中移除，"
+            f"以下空集合已自动删除: {', '.join(deleted_collections)}"
+        )
+
+
+async def is_group_admin_or_superuser(bot: Bot, event: GroupMessageEvent) -> bool:
+    """检查用户是否为群管理员、群主或超级用户"""
+    if await SUPERUSER(bot, event):
+        return True
+    try:
+        member_info = await bot.get_group_member_info(
+            group_id=event.group_id, user_id=event.user_id
+        )
+        return member_info.get("role") in ("admin", "owner")
+    except Exception:
+        return False
+
+
+def is_managing_collection(event: GroupMessageEvent) -> bool:
+    """检查是否为集合管理命令: 集合 xxx @人"""
+    text = event.message.extract_plain_text().strip()
+    has_at = any(seg.type == "at" for seg in event.message)
+    return text.startswith("集合 ") and has_at
+
+
+def is_viewing_collection(event: GroupMessageEvent) -> bool:
+    """检查是否为查看集合命令: 集合 xxx (无@)"""
+    text = event.message.extract_plain_text().strip()
+    has_at = any(seg.type == "at" for seg in event.message)
+    return text.startswith("集合 ") and not has_at and text != "集合列表"
+
+
+def is_listing_collections(event: GroupMessageEvent) -> bool:
+    """检查是否为列出集合命令"""
+    text = event.message.extract_plain_text().strip()
+    return text == "集合列表"
+
+
+def is_removing_from_collection(event: GroupMessageEvent) -> bool:
+    """检查是否为移除集合成员命令"""
+    text = event.message.extract_plain_text().strip()
+    has_at = any(seg.type == "at" for seg in event.message)
+    return text.startswith("移除集合 ") and has_at
+
+
+def is_deleting_collection(event: GroupMessageEvent) -> bool:
+    """检查是否为删除集合命令"""
+    text = event.message.extract_plain_text().strip()
+    return text.startswith("删除集合 ")
+
+
+manage_collection_matcher = on_message(rule=is_managing_collection, priority=5, block=True)
+view_collection_matcher = on_message(rule=is_viewing_collection, priority=5, block=True)
+list_collections_matcher = on_message(rule=is_listing_collections, priority=5, block=True)
+remove_from_collection_matcher = on_message(
+    rule=is_removing_from_collection, priority=5, block=True
+)
+delete_collection_matcher = on_message(rule=is_deleting_collection, priority=5, block=True)
+
+
+def extract_all_at_qq(msg: Message) -> list[str]:
+    """从消息中提取所有 @目标的 QQ 号"""
+    return [str(seg.data.get("qq")) for seg in msg if seg.type == "at" and seg.data.get("qq")]
+
+
+def parse_collection_name_from_command(text: str, prefix: str) -> str | None:
+    """从命令中提取集合名"""
+    if not text.startswith(prefix):
+        return None
+    rest = text[len(prefix) :].strip()
+    parts = rest.split()
+    return parts[0] if parts else None
+
+
+async def get_member_names(bot: Bot, group_id: int, user_ids: list[str]) -> dict[str, str]:
+    """批量获取成员昵称"""
+    names: dict[str, str] = {}
+    for uid in user_ids:
+        try:
+            info = await bot.get_group_member_info(group_id=group_id, user_id=int(uid))
+            names[uid] = info.get("card") or info.get("nickname") or uid
+        except Exception:
+            names[uid] = uid
+    return names
+
+
+@manage_collection_matcher.handle()
+async def handle_manage_collection(bot: Bot, event: GroupMessageEvent) -> None:
+    if not await is_group_admin_or_superuser(bot, event):
+        await manage_collection_matcher.finish("仅管理员可以管理集合")
+        return
+
+    text = event.message.extract_plain_text().strip()
+    collection_name = parse_collection_name_from_command(text, "集合 ")
+
+    if not collection_name:
+        await manage_collection_matcher.finish("请指定集合名")
+        return
+
+    error_msg = validate_collection_name(collection_name)
+    if error_msg:
+        await manage_collection_matcher.finish(error_msg)
+        return
+
+    group_id = str(event.group_id)
+    user_ids = extract_all_at_qq(event.message)
+
+    if not user_ids:
+        await manage_collection_matcher.finish("请@要添加到集合的成员")
+        return
+
+    if await name_exists_as_nickname(group_id, collection_name):
+        await manage_collection_matcher.finish(f"名称「{collection_name}」已被昵称占用!")
+        return
+
+    existing_members = await fetch_collection_members(group_id, collection_name)
+    is_new_collection = len(existing_members) == 0
+    max_members = config.max_collection_members
+
+    if not is_new_collection and len(existing_members) + len(user_ids) > max_members:
+        await manage_collection_matcher.finish(f"集合成员数超过上限（最多{max_members}人）")
+        return
+
+    added, already_exists = await add_collection_members(group_id, collection_name, user_ids)
+
+    if not added:
+        await manage_collection_matcher.finish(f"这些成员已在集合「{collection_name}」中")
+        return
+
+    member_names = await get_member_names(bot, event.group_id, added)
+    names_str = "、".join(member_names.values())
+
+    if is_new_collection:
+        reply = f"已创建集合「{collection_name}」，添加了 {len(added)} 人: {names_str}"
+    else:
+        reply = f"已向集合「{collection_name}」添加 {len(added)} 人: {names_str}"
+
+    if already_exists:
+        reply += f"\n（{len(already_exists)} 人已在集合中）"
+
+    await manage_collection_matcher.finish(reply)
+
+
+@view_collection_matcher.handle()
+async def handle_view_collection(bot: Bot, event: GroupMessageEvent) -> None:
+    text = event.message.extract_plain_text().strip()
+    collection_name = parse_collection_name_from_command(text, "集合 ")
+
+    if not collection_name:
+        await view_collection_matcher.finish("请指定集合名")
+        return
+
+    group_id = str(event.group_id)
+    members = await fetch_collection_members(group_id, collection_name)
+
+    if not members:
+        await view_collection_matcher.finish(f"集合「{collection_name}」不存在")
+        return
+
+    member_names = await get_member_names(bot, event.group_id, members)
+    names_str = "、".join(member_names.values())
+    await view_collection_matcher.finish(
+        f"集合「{collection_name}」共 {len(members)} 人: {names_str}"
+    )
+
+
+@list_collections_matcher.handle()
+async def handle_list_collections(bot: Bot, event: GroupMessageEvent) -> None:
+    group_id = str(event.group_id)
+    collections = await fetch_all_collections_summary(group_id)
+
+    if not collections:
+        await list_collections_matcher.finish("本群暂无集合")
+        return
+
+    lines = [f"本群共 {len(collections)} 个集合:"]
+    for name, count in collections:
+        lines.append(f"  • {name} ({count}人)")
+
+    await list_collections_matcher.finish("\n".join(lines))
+
+
+@remove_from_collection_matcher.handle()
+async def handle_remove_from_collection(bot: Bot, event: GroupMessageEvent) -> None:
+    if not await is_group_admin_or_superuser(bot, event):
+        await remove_from_collection_matcher.finish("仅管理员可以管理集合")
+        return
+
+    text = event.message.extract_plain_text().strip()
+    collection_name = parse_collection_name_from_command(text, "移除集合 ")
+
+    if not collection_name:
+        await remove_from_collection_matcher.finish("请指定集合名")
+        return
+
+    group_id = str(event.group_id)
+    user_ids = extract_all_at_qq(event.message)
+
+    if not user_ids:
+        await remove_from_collection_matcher.finish("请@要移除的成员")
+        return
+
+    existing_members = await fetch_collection_members(group_id, collection_name)
+    if not existing_members:
+        await remove_from_collection_matcher.finish(f"集合「{collection_name}」不存在")
+        return
+
+    removed, not_found, collection_deleted = await remove_collection_members(
+        group_id, collection_name, user_ids
+    )
+
+    if removed:
+        member_names = await get_member_names(bot, event.group_id, removed)
+        names_str = "、".join(member_names.values())
+        reply = f"已从集合「{collection_name}」移除: {names_str}"
+        if collection_deleted:
+            reply += f"\n集合「{collection_name}」已无成员，已自动删除"
+        if not_found:
+            reply += f"\n（{len(not_found)} 人不在集合中）"
+        await remove_from_collection_matcher.finish(reply)
+    else:
+        await remove_from_collection_matcher.finish("这些成员不在集合中")
+
+
+@delete_collection_matcher.handle()
+async def handle_delete_collection(bot: Bot, event: GroupMessageEvent) -> None:
+    if not await is_group_admin_or_superuser(bot, event):
+        await delete_collection_matcher.finish("仅管理员可以删除集合")
+        return
+
+    text = event.message.extract_plain_text().strip()
+    collection_name = parse_collection_name_from_command(text, "删除集合 ")
+
+    if not collection_name:
+        await delete_collection_matcher.finish("请指定集合名")
+        return
+
+    group_id = str(event.group_id)
+    deleted_members = await delete_collection(group_id, collection_name)
+
+    if deleted_members:
+        await delete_collection_matcher.finish(
+            f"已删除集合「{collection_name}」（原有 {len(deleted_members)} 人）"
+        )
+    else:
+        await delete_collection_matcher.finish(f"集合「{collection_name}」不存在")
