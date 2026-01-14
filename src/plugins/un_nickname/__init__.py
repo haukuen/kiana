@@ -860,7 +860,8 @@ delete_collection_matcher = on_message(rule=is_deleting_collection, priority=5, 
 
 def extract_all_at_qq(msg: Message) -> list[str]:
     """从消息中提取所有 @目标的 QQ 号"""
-    return [str(seg.data.get("qq")) for seg in msg if seg.type == "at" and seg.data.get("qq")]
+    result = [str(seg.data.get("qq")) for seg in msg if seg.type == "at" and seg.data.get("qq")]
+    return list(dict.fromkeys(result))
 
 
 def parse_collection_name_from_command(text: str, prefix: str) -> str | None:
@@ -917,7 +918,7 @@ async def handle_manage_collection(bot: Bot, event: GroupMessageEvent) -> None:
     is_new_collection = len(existing_members) == 0
     max_members = config.max_collection_members
 
-    if not is_new_collection and len(existing_members) + len(user_ids) > max_members:
+    if len(existing_members) + len(user_ids) > max_members:
         await manage_collection_matcher.finish(f"集合成员数超过上限（最多{max_members}人）")
         return
 
