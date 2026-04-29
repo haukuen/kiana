@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    background: #f5f5f5;
+}
+.container {
+    width: 700px;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #ffffff;
+    padding: 20px 24px;
+    text-align: center;
+}
+.header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+}
+.header p {
+    margin: 6px 0 0;
+    font-size: 13px;
+    opacity: 0.85;
+}
+.body {
+    padding: 16px;
+}
+.card-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 10px;
+}
+.card {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 14px;
+    vertical-align: top;
+    width: 50%;
+}
+.card-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+    margin: 0 0 6px;
+}
+.card-desc {
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 8px;
+    line-height: 1.4;
+}
+.card-hint {
+    font-size: 11px;
+    color: #999;
+}
+.footer {
+    padding: 12px 24px;
+    text-align: center;
+    font-size: 12px;
+    color: #999;
+    border-top: 1px solid #eee;
+}
+
+/* 详情页样式 */
+.detail-body {
+    padding: 20px 24px;
+}
+.detail-name {
+    font-size: 20px;
+    font-weight: 600;
+    color: #333;
+    margin: 0 0 16px;
+}
+.detail-usage {
+    font-size: 14px;
+    color: #444;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #e9ecef;
+}
+</style>
+</head>
+<body>
+
+{% if mode == "overview" %}
+<div class="container">
+    <div class="header">
+        <h1>Kiana 命令列表</h1>
+        <p>发送「猫猫帮助 命令名」查看详细用法</p>
+    </div>
+    <div class="body">
+        <table class="card-grid">
+            <tr>
+            {% for cmd in commands %}
+                <td class="card">
+                    <p class="card-name">{{ cmd.name }}</p>
+                    <p class="card-desc">{{ cmd.desc }}</p>
+                    <p class="card-hint">猫猫帮助 {{ cmd.name }} →</p>
+                </td>
+                {% if loop.index % 2 == 0 and not loop.last %}
+                    </tr><tr>
+                {% endif %}
+            {% endfor %}
+            {% if commands|length % 2 != 0 %}
+                <td class="card" style="border: none; background: transparent;"></td>
+            {% endif %}
+            </tr>
+        </table>
+    </div>
+    <div class="footer">发送「猫猫帮助 命令名」查看详细用法</div>
+</div>
+
+{% elif mode == "detail" %}
+<div class="container">
+    <div class="header">
+        <h1>{{ name }} - 详细命令</h1>
+    </div>
+    <div class="detail-body">
+        <div class="detail-usage">{{ usage }}</div>
+    </div>
+    <div class="footer">发送「猫猫帮助」返回总览</div>
+</div>
+{% endif %}
+
+</body>
+</html>
