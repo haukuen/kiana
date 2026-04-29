@@ -7,7 +7,7 @@
 from pathlib import Path
 
 from nonebot import get_loaded_plugins, logger, on_regex
-from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import MessageEvent, MessageSegment
 from nonebot.params import RegexGroup
 from nonebot.plugin import PluginMetadata
 from nonebot_plugin_htmlkit import template_to_pic
@@ -59,11 +59,10 @@ def _find_plugin(name: str):
 
 @help_matcher.handle()
 async def handle_help(
-    bot: Bot,
     event: MessageEvent,
-    RegexGroup: tuple = RegexGroup(),
+    regex_groups: tuple = RegexGroup(),
 ):
-    query = RegexGroup[0]
+    query = regex_groups[0]
 
     if query:
         # 详情模式
@@ -73,11 +72,12 @@ async def handle_help(
                 f"未找到「{query}」命令，发送「猫猫帮助」查看所有命令"
             )
 
-        if not await check_plugin_visibility(plugin.name, event):
+        if not await check_plugin_visibility(plugin.name, event):  # type: ignore[union-attr]
             await help_matcher.finish(
                 f"未找到「{query}」命令，发送「猫猫帮助」查看所有命令"
             )
 
+        assert plugin.metadata is not None
         usage = plugin.metadata.usage or plugin.metadata.description or "暂无详细说明"
         template_data = {
             "mode": "detail",
@@ -107,7 +107,7 @@ async def handle_help(
         logger.error(f"帮助页面渲染失败: {e}")
         # fallback 到纯文本
         if query:
-            await help_matcher.finish(f"【{plugin.metadata.name}】\n{usage}")
+            await help_matcher.finish(f"【{plugin.metadata.name}】\n{usage}")  # type: ignore[possibly-undefined]
         else:
-            text_lines = [f"• {c['name']}: {c['desc']}" for c in commands]
+            text_lines = [f"• {c['name']}: {c['desc']}" for c in commands]  # type: ignore[possibly-undefined]
             await help_matcher.finish("可用命令:\n" + "\n".join(text_lines))

@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from nonebot.adapters.onebot.v11 import Event, GroupMessageEvent
+from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from src.plugins.group_permission import (
     _VISIBILITY_REGISTRY,
@@ -29,12 +29,6 @@ def _make_group_event(group_id: int = 12345) -> MagicMock:
     return event
 
 
-def _make_private_event() -> MagicMock:
-    """创建私聊消息事件 mock"""
-    event = MagicMock(spec=Event)
-    return event
-
-
 class TestCheckPluginVisibility:
     async def test_unregistered_plugin_returns_true(self):
         event = _make_group_event()
@@ -42,14 +36,14 @@ class TestCheckPluginVisibility:
 
     async def test_registered_plugin_returns_checker_result(self):
         event = _make_group_event()
-        async def _false_checker(e):
+        async def _false_checker(_):
             return False
         _VISIBILITY_REGISTRY["test"] = _false_checker
         assert await check_plugin_visibility("test", event) is False
 
     async def test_registered_plugin_true(self):
         event = _make_group_event()
-        async def _true_checker(e):
+        async def _true_checker(_):
             return True
         _VISIBILITY_REGISTRY["test"] = _true_checker
         assert await check_plugin_visibility("test", event) is True
