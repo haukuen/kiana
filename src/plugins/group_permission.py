@@ -1,8 +1,19 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from nonebot.adapters.onebot.v11 import Event, GroupMessageEvent
 from pydantic import BaseModel, Field
+
+_VISIBILITY_REGISTRY: dict[str, Callable[[Event], Awaitable[bool]]] = {}
+
+
+async def check_plugin_visibility(plugin_name: str, event: Event) -> bool:
+    """检查插件在当前事件下是否可见
+
+    对于未注册的插件（不使用 group_permission 的插件），默认返回 True。
+    """
+    checker = _VISIBILITY_REGISTRY.get(plugin_name)
+    return await checker(event) if checker else True
 
 
 class GroupPermissionMixin(BaseModel):
@@ -101,6 +112,10 @@ def create_group_rule(
 
         return check_group_permission(event, enabled, group_mode, group_whitelist, group_blacklist)
 
+    # 注册可见性检查器
+    plugin_name = prefix.rstrip("_") if prefix else plugin_enabled_attr.replace("_plugin_enabled", "")
+    _VISIBILITY_REGISTRY[plugin_name] = group_rule
+
     return group_rule
 
 
@@ -156,6 +171,11 @@ def create_sub_feature_rule(
             event, plugin_enabled, group_mode, group_whitelist, group_blacklist
         )
 
+    # 注册可见性检查器（子功能插件共享同一个 plugin_name）
+    plugin_name = prefix.rstrip("_") if prefix else plugin_enabled_attr.replace("_plugin_enabled", "")
+    if plugin_name not in _VISIBILITY_REGISTRY:
+        _VISIBILITY_REGISTRY[plugin_name] = sub_feature_rule
+
     return sub_feature_rule
 
 
@@ -194,5 +214,8 @@ def create_platform_rule(
         group_blacklist = getattr(config, blacklist_attr, [])
 
         return check_group_permission(event, enabled, group_mode, group_whitelist, group_blacklist)
+
+    # 注册平台可见性检查器
+    _VISIBILITY_REGISTRY[platform] = platform_rule
 
     return platform_rule
