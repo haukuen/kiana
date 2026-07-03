@@ -1,3 +1,5 @@
+import re
+
 from nonebot import get_plugin_config, logger, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -57,9 +59,9 @@ def is_adding_nickname(event: GroupMessageEvent) -> bool:
 
 
 def is_replacing_nickname(event: GroupMessageEvent) -> bool:
-    """检查消息是否包含 'at' 关键字"""
+    """检查消息是否包含 'at昵称' 触发语法"""
     text = event.message.extract_plain_text()
-    return "at" in text
+    return bool(AT_NICKNAME_PATTERN.search(text))
 
 
 def is_deleting_nickname(event: GroupMessageEvent) -> bool:
@@ -227,45 +229,78 @@ async def handle_add_nickname(bot: Bot, event: GroupMessageEvent) -> None:
         await add_nickname_matcher.finish(f"用户已有昵称'{nickname}'!")
 
 
+def _replace_text_segment(
+    text: str,
+    matches: list[re.Match[str]],
+    sender_id: str,
+    nickname_to_qq: dict[str, str],
+    collection_to_users: dict[str, list[str]],
+) -> tuple[list[MessageSegment], bool]:
+    """替换单个 text 段中的 at 昵称，返回（消息段列表, 是否发生替换）"""
+    parts: list[MessageSegment] = []
+    replaced = False
+    last_pos = 0
+
+    for match in matches:
+        start, end = match.span()
+        if start > last_pos:
+            parts.append(MessageSegment.text(text[last_pos:start]))
+
+        name = match.group(1)
+        at_segments = _resolve_at_target(name, sender_id, nickname_to_qq, collection_to_users)
+        if at_segments:
+            parts.extend(at_segments)
+            replaced = True
+        else:
+            parts.append(MessageSegment.text(match.group()))
+        last_pos = end
+
+    if last_pos < len(text):
+        parts.append(MessageSegment.text(text[last_pos:]))
+
+    return parts, replaced
+
+
 @replace_nickname_matcher.handle()
 async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
     """处理昵称替换，将 'at昵称' 替换为实际的 @mentions"""
     group_id = str(event.group_id)
     sender_id = str(event.user_id)
+
+    # 先扫描所有 text 段收集候选名，无命中则直接返回，避免无谓的缓存/DB 查询
+    matches_by_text: dict[str, list[re.Match[str]]] = {}
+    for seg in event.message:
+        if seg.type != "text":
+            continue
+        text = seg.data["text"]
+        if text not in matches_by_text:
+            ms = list(AT_NICKNAME_PATTERN.finditer(text))
+            if ms:
+                matches_by_text[text] = ms
+    if not matches_by_text:
+        return
+
     nickname_to_qq = await get_cached_nickname_map(group_id)
     collection_to_users = await get_cached_collection_map(group_id)
 
-    original_msg = event.message
     new_msg = Message()
     replaced = False
 
-    for seg in original_msg:
+    for seg in event.message:
         if seg.type != "text":
             new_msg.append(seg)
             continue
 
-        text = seg.data["text"]
-        parts: list[MessageSegment] = []
-        last_pos = 0
+        matches = matches_by_text.get(seg.data["text"])
+        if not matches:
+            new_msg.append(seg)
+            continue
 
-        for match in AT_NICKNAME_PATTERN.finditer(text):
-            start, end = match.span()
-            if start > last_pos:
-                parts.append(MessageSegment.text(text[last_pos:start]))
-
-            name = match.group(1)
-            at_segments = _resolve_at_target(name, sender_id, nickname_to_qq, collection_to_users)
-            if at_segments:
-                parts.extend(at_segments)
-                replaced = True
-            else:
-                parts.append(MessageSegment.text(match.group()))
-            last_pos = end
-
-        if last_pos < len(text):
-            parts.append(MessageSegment.text(text[last_pos:]))
-
+        parts, did_replace = _replace_text_segment(
+            seg.data["text"], matches, sender_id, nickname_to_qq, collection_to_users
+        )
         new_msg.extend(parts)
+        replaced = replaced or did_replace
 
     if replaced:
         await bot.send(event, new_msg)

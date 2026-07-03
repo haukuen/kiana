@@ -9,7 +9,9 @@ config: Config = get_plugin_config(Config)
 
 # 正则表达式常量
 VALID_NICKNAME_PATTERN = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9]+$")
-AT_NICKNAME_PATTERN = re.compile(r"\bat\s*([\u4e00-\u9fa5a-zA-Z0-9]+)(?=\s|$)")
+# 捕获 at 昵称：'at' 后可有一个空格，名字由汉字/字母/数字组成，
+# 名字后不能再跟名字字符（避免贪婪吞掉后续中文，也兼容中文标点/句尾）。
+AT_NICKNAME_PATTERN = re.compile(r"\bat ?([\u4e00-\u9fa5a-zA-Z0-9]+)(?![\u4e00-\u9fa5a-zA-Z0-9])")
 
 
 def is_valid_nickname(nickname: str) -> bool:
