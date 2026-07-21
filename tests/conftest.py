@@ -30,10 +30,18 @@ async def load_plugins(_nonebot_init: None):
     load_plugin("src.plugins.message_archive")
     load_plugin("src.plugins.chat_forward")
     load_plugin("src.plugins.a_share_sentiment")
+    load_plugin("src.plugins.un_nickname")
+    load_plugin("src.plugins.refine")
 
     from src.plugins.message_archive.db import ensure_schema
+    from src.plugins.refine.db import ensure_schema as ensure_refine_schema
+    from src.plugins.un_nickname.db import (
+        ensure_schema as ensure_un_nickname_schema,
+    )
 
     ensure_schema()
+    ensure_refine_schema()
+    ensure_un_nickname_schema()
 
 
 @pytest.fixture(autouse=True)
@@ -65,11 +73,21 @@ def reset_a_share_sentiment_state() -> None:
 async def reset_message_archive_table() -> None:
     """每个用例前清空消息归档表。"""
     from src.plugins.message_archive.db import ensure_schema
+    from src.plugins.refine.db import ensure_schema as ensure_refine_schema
+    from src.plugins.un_nickname.db import (
+        ensure_schema as ensure_un_nickname_schema,
+    )
     from src.storage import get_db
 
     ensure_schema()
+    ensure_refine_schema()
+    ensure_un_nickname_schema()
     await get_db().execute("DELETE FROM message_archive")
     await get_db().execute("DELETE FROM message_archive_image")
+    await get_db().execute("DELETE FROM refine_result")
+    await get_db().execute("DELETE FROM refine_subscription")
+    await get_db().execute("DELETE FROM nicknames")
+    await get_db().execute("DELETE FROM nickname_collections")
 
 
 @pytest_asyncio.fixture
