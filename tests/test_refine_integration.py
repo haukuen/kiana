@@ -1,14 +1,15 @@
-"""炼化插件集成 / mock-bot 测试。
+"""炼化插件集成 / mock-bot 测试（v2 — 懒触发实时提炼）。
 
 与 ``test_refine.py``（单元测试）的差异:
 - 不 mock ``fetch_collection_members`` / ``fetch_group_messages_by_time_range``，
   走真实的 un_nickname + message_archive DB 链路。
 - 用本地 httpx mock server（或 ``patch`` httpx 顶层 AsyncClient.post）模拟 AI
   端点，但完整跑 collect → prompt → response → 落库 链路。
-- 触发 driver ``on_startup`` 钩子，验证 apscheduler 是否注册了正确的 cron job。
 - 用 ``nonebug`` 完整跑事件 → matcher → handler → DB → 回包 全链路。
 
 不连接真实 OneBot 协议端、不调真实 OpenAI API。
+
+v2 — 不再注册任何 cron job；驱动 ``on_startup`` 钩子只 ensure_schema + 校验 AI 配置。
 """
 
 from __future__ import annotations
@@ -88,6 +89,11 @@ def _expect_bot_not_muted(
     )
 
 
+def _fake_dt():
+    """返回一个 strftime 始终输出 'T' 的假 datetime 实例。"""
+    return type("FakeDT", (), {"strftime": lambda self, fmt: "T"})()
+
+
 # ── 公共 fixture ────────────────────────────────────────
 
 
@@ -104,7 +110,8 @@ def _reset_refine_config() -> None:
         refine_ai_model="gpt-test",
         refine_ai_timeout_seconds=30.0,
         refine_ai_temperature=0.3,
-        refine_result_retention_days=3,
+        refine_result_fresh_seconds=86400,
+        refine_query_cooldown_seconds=60,
         refine_lookback_hours=24,
         refine_max_messages_per_target=200,
         refine_max_prompt_chars=12000,
@@ -112,69 +119,16 @@ def _reset_refine_config() -> None:
     )
 
 
-# ═══════════════════════════════════════════════════════════════
-# 1. driver.on_startup → apscheduler cron 注册
-# ═══════════════════════════════════════════════════════════════
+@pytest.fixture(autouse=True)
+def _reset_refine_cooldown() -> None:
+    """每用例前清空 commands.cooldown_dict。"""
+    from src.plugins.refine import commands
 
-
-@pytest.mark.asyncio
-async def test_startup_registers_cron_jobs_when_enabled(tmp_path, monkeypatch) -> None:
-    """启用插件时，driver.on_startup 应注册两个 cron job（提炼 + 清理）。
-
-    完整跑 driver ``_lifespan.startup()`` 链路，断言 aps_scheduler 有 refine 的 job。
-    """
-    from nonebot_plugin_apscheduler import scheduler as aps
-
-    # 清掉启动时已注册的 refine 同名 job（autouse fixture 可能有残留）
-    for j in aps.get_jobs():
-        if "refine" in (j.id or "").lower() or "refine" in (j.name or "").lower():
-            j.remove()
-
-    # 重新触发 refine 的 on_startup（conftest 的 load_plugins 已经在 session 启动时
-    # 注册过；测试中再手动调用一次确保被跑）
-    from src.plugins.refine import _init_refine
-
-    await _init_refine()
-
-    refine_jobs = [
-        j for j in aps.get_jobs() if "_daily_refine_job" in (j.func.__name__ or "")
-        or "_daily_purge_job" in (j.func.__name__ or "")
-    ]
-    assert len(refine_jobs) == 2, f"Expected 2 refine jobs, got {len(refine_jobs)}"
-
-    # 清理
-    for j in refine_jobs:
-        j.remove()
-
-
-@pytest.mark.asyncio
-async def test_startup_skips_cron_when_disabled() -> None:
-    """``refine_plugin_enabled=False`` 时不应注册 cron job。"""
-    from nonebot_plugin_apscheduler import scheduler as aps
-
-    _configure_refine_plugin(refine_plugin_enabled=False)
-    # 先清掉已注册的 refine job
-    for j in aps.get_jobs():
-        if "_daily_refine_job" in (j.func.__name__ or "") or "_daily_purge_job" in (
-            j.func.__name__ or ""
-        ):
-            j.remove()
-
-    from src.plugins.refine import _init_refine
-
-    await _init_refine()
-
-    refine_jobs = [
-        j
-        for j in aps.get_jobs()
-        if "_daily_refine_job" in (j.func.__name__ or "")
-        or "_daily_purge_job" in (j.func.__name__ or "")
-    ]
-    assert len(refine_jobs) == 0
+    commands.cooldown_dict.clear()
 
 
 # ═══════════════════════════════════════════════════════════════
-# 2. un_nickname 集成：collection 订阅 → 真实 fetch_collection_members
+# 1. un_nickname 集成：collection 订阅 → 真实 fetch_collection_members
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -230,113 +184,15 @@ async def test_collection_subscription_collects_multiple_members() -> None:
     assert all("用户999" not in t for t in texts)
 
 
-@pytest.mark.asyncio
-async def test_collection_subscription_command_end_to_end(app: App) -> None:
-    """端到端：创建集合 → 订阅 collection → 刷新 → 查询，全链路 nonebug。"""
-    from src.plugins.message_archive.db import archive_message_event
-    from src.plugins.refine import commands
-    from src.plugins.refine.db import get_latest_result, get_subscription_by_label
-    from src.plugins.un_nickname.db import add_collection_members
-
-    # 1. 先建集合
-    await add_collection_members("200001", "核心组", ["111", "222"])
-
-    fixed_now = 1_800_000_000
-    # 2. 灌发言（足够多触发提炼，>= refine_min_messages_to_refine=2）
-    for uid, mid in zip([111, 222], [101, 102], strict=True):
-        await archive_message_event(
-            _make_group_event(
-                f"集合成员{uid}的发言内容",
-                user_id=uid,
-                group_id=200001,
-                message_id=mid,
-                event_time=fixed_now - 600,
-                nickname=f"成员{uid}",
-            )
-        )
-
-    # 3. 订阅命令（用 collection: 写法）
-    subscribe_event = _make_group_event(
-        "炼化订阅 核心 collection:核心组", message_id=200
-    )
-    async with app.test_matcher(commands.refine_subscribe) as ctx:
-        bot = ctx.create_bot(base=Bot, self_id="987654321")
-        _expect_bot_not_muted(ctx)
-        ctx.receive_event(bot, subscribe_event)
-        ctx.should_pass_rule()
-        ctx.should_call_send(
-            subscribe_event,
-            (
-                "✅ 已订阅 [核心] (集合=核心组)\n"
-                "下次定时提炼：每日 08:00\n"
-                "若需立即生成结果，发送：炼化刷新 核心"
-            ),
-            result={"message_id": 2000},
-        )
-
-    sub = await get_subscription_by_label("200001", "核心")
-    assert sub is not None
-    assert sub.target_type == "collection"
-    assert sub.target_value == "核心组"
-
-    # 4. 刷新命令，patch AI 返回 + 时间稳定
-    fake_dt = type("FakeDT", (), {"strftime": lambda self, fmt: "T"})()
-    refresh_event = _make_group_event(
-        "炼化刷新 核心", message_id=201, event_time=fixed_now
-    )
-    with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(return_value=_fake_ai_response("集合总结内容")),
-        ),
-        patch.object(commands, "datetime") as mock_dt,
-        patch("src.plugins.refine.collector.time.time", return_value=fixed_now),
-    ):
-        mock_dt.fromtimestamp.return_value = fake_dt
-        async with app.test_matcher(commands.refine_refresh) as ctx:
-            bot = ctx.create_bot(base=Bot, self_id="987654321")
-            _expect_bot_not_muted(ctx)
-            ctx.receive_event(bot, refresh_event)
-            ctx.should_pass_rule()
-            ctx.should_call_send(
-                refresh_event,
-                "⏳ 正在为 [核心] 提炼，请稍候...",
-                result={"message_id": 2001},
-            )
-            ctx.should_call_send(
-                refresh_event,
-                (
-                    "🧪 炼化结果：[核心]\n"
-                    "目标：集合=核心组\n"
-                    "集合成员：2 人\n"
-                    "采样窗口：T ~ T\n"
-                    "采样消息：2 条\n"
-                    "模型：gpt-test\n"
-                    "\n"
-                    "集合总结内容"
-                ),
-                result={"message_id": 2002},
-            )
-
-    # 5. 验证落库
-    result = await get_latest_result(sub.id)
-    assert result is not None
-    assert result.summary == "集合总结内容"
-    assert result.message_count == 2
-
-
 # ═══════════════════════════════════════════════════════════════
-# 3. message_archive event_preprocessor 集成
+# 2. message_archive event_preprocessor 集成
 # ═══════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
 async def test_message_archive_preprocessor_feeds_refine_pipeline(app: App) -> None:
     """用 event_preprocessor 走归档（不直接调 archive_message_event），
-    再触发炼化采集，验证完整 preprocess → archive → collect → AI → store 链路。
-
-    这里用消息事件直接调用 ``run_postprocessor`` 之外的方式：通过
-    ``archive_received_message`` 触发 message_archive 的归档 handler。
+    再触发炼化采集，验证完整 preprocess → archive → collect 链路。
     """
 
     from src.plugins.message_archive import archive_received_message
@@ -385,7 +241,7 @@ async def test_message_archive_preprocessor_feeds_refine_pipeline(app: App) -> N
         label="目标",
         created_at=fixed_now,
     )
-    with patch("src.plugins.refine.collector.time.time", return_value=fixed_now):
+    with patch("time.time", return_value=float(fixed_now)):
         collected = await collect_messages_for_subscription(
             sub, lookback_hours=24, max_messages=100, max_prompt_chars=10000
         )
@@ -399,131 +255,7 @@ async def test_message_archive_preprocessor_feeds_refine_pipeline(app: App) -> N
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4. 全链路：订阅 → 发言 → 刷新（mock AI）→ 查询，无动态时间问题
-# ═══════════════════════════════════════════════════════════════
-
-
-@pytest.mark.asyncio
-async def test_full_pipeline_subscribe_refresh_query(app: App) -> None:
-    """端到端全链路（user 订阅）：
-    订阅 → 灌发言 → 刷新（mock AI）→ 查询 → 验证总结。
-    覆盖 commands + db + collector + ai + runner + format 全部模块。
-    """
-    from src.plugins.message_archive.db import archive_message_event
-    from src.plugins.refine import commands
-    from src.plugins.refine.db import get_latest_result, get_subscription_by_label
-
-    fixed_now = 1_800_000_000
-    # 1. 灌发言（在订阅之前，模拟历史消息已存在）
-    for i in range(3):
-        await archive_message_event(
-            _make_group_event(
-                f"目标用户的历史发言第{i}条",
-                user_id=555,
-                group_id=200001,
-                message_id=500 + i,
-                event_time=fixed_now - 600 + i * 60,
-                nickname="目标用户",
-            )
-        )
-
-    # 2. 订阅
-    sub_event = _make_group_event(
-        "炼化订阅 目标 user:555", message_id=600
-    )
-    async with app.test_matcher(commands.refine_subscribe) as ctx:
-        bot = ctx.create_bot(base=Bot, self_id="987654321")
-        _expect_bot_not_muted(ctx)
-        ctx.receive_event(bot, sub_event)
-        ctx.should_pass_rule()
-        ctx.should_call_send(
-            sub_event,
-            (
-                "✅ 已订阅 [目标] (用户=555)\n"
-                "下次定时提炼：每日 08:00\n"
-                "若需立即生成结果，发送：炼化刷新 目标"
-            ),
-            result={"message_id": 6000},
-        )
-
-    # 3. 刷新（mock AI 返回）
-    fake_dt = type("FakeDT", (), {"strftime": lambda self, fmt: "T"})()
-    refresh_event = _make_group_event(
-        "炼化刷新 目标", message_id=601, event_time=fixed_now
-    )
-    # mute cache 在 first matcher 后是否被填充依赖 nonebug 实现细节，每 matcher
-    # 前手动清缓存 + 声明 mute API，保证测试稳定
-    from src import plugins as global_plugins
-
-    global_plugins._mute_cache.clear()
-    with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(return_value=_fake_ai_response("完整链路总结")),
-        ),
-        patch.object(commands, "datetime") as mock_dt,
-        patch("src.plugins.refine.collector.time.time", return_value=fixed_now),
-    ):
-        mock_dt.fromtimestamp.return_value = fake_dt
-        async with app.test_matcher(commands.refine_refresh) as ctx:
-            bot = ctx.create_bot(base=Bot, self_id="987654321")
-            _expect_bot_not_muted(ctx)
-            ctx.receive_event(bot, refresh_event)
-            ctx.should_pass_rule()
-            ctx.should_call_send(
-                refresh_event,
-                "⏳ 正在为 [目标] 提炼，请稍候...",
-                result={"message_id": 6001},
-            )
-            ctx.should_call_send(
-                refresh_event,
-                (
-                    "🧪 炼化结果：[目标]\n"
-                    "目标：用户=555\n"
-                    "采样窗口：T ~ T\n"
-                    "采样消息：3 条\n"
-                    "模型：gpt-test\n"
-                    "\n"
-                    "完整链路总结"
-                ),
-                result={"message_id": 6002},
-            )
-
-    # 4. 单独查询（验证落库后能查到，不重新调 AI）
-    query_event = _make_group_event("炼化查询 目标", message_id=602)
-    global_plugins._mute_cache.clear()
-    with patch.object(commands, "datetime") as mock_dt:
-        mock_dt.fromtimestamp.return_value = fake_dt
-        async with app.test_matcher(commands.refine_query) as ctx:
-            bot = ctx.create_bot(base=Bot, self_id="987654321")
-            _expect_bot_not_muted(ctx)
-            ctx.receive_event(bot, query_event)
-            ctx.should_pass_rule()
-            ctx.should_call_send(
-                query_event,
-                (
-                    "🧪 炼化结果：[目标]\n"
-                    "目标：用户=555\n"
-                    "采样窗口：T ~ T\n"
-                    "采样消息：3 条\n"
-                    "模型：gpt-test\n"
-                    "\n"
-                    "完整链路总结"
-                ),
-                result={"message_id": 6003},
-            )
-
-    # 5. 最终验证：DB 状态
-    sub = await get_subscription_by_label("200001", "目标")
-    assert sub is not None
-    result = await get_latest_result(sub.id)
-    assert result is not None
-    assert result.summary == "完整链路总结"
-    assert result.message_count == 3
-
-
-# ═══════════════════════════════════════════════════════════════
-# 5. AI 调用真实 payload 验证（不 mock collect，只 mock httpx）
+# 3. AI 调用真实 payload 验证（不 mock collect，只 mock httpx）
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -562,7 +294,7 @@ async def test_ai_payload_contains_real_archived_text() -> None:
 
     import src.plugins.refine as rp
 
-    with patch("src.plugins.refine.collector.time.time", return_value=fixed_now):
+    with patch("time.time", return_value=float(fixed_now)):
         collected, payload = await collect_and_build_payload(sub, rp.config)
 
     assert unique_text in payload, "采集到的原文未出现在 prompt_payload 里"
@@ -590,3 +322,203 @@ async def test_ai_payload_contains_real_archived_text() -> None:
     # user prompt 里包含原文
     user_msg = captured["json"]["messages"][1]["content"]
     assert unique_text in user_msg
+
+
+# ═══════════════════════════════════════════════════════════════
+# 4. 懒触发全链路：集合订阅 → 灌发言 → 炼化 命令（首次重炼）
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_lazy_refine_full_pipeline(app: App) -> None:
+    """端到端全链路（collection 订阅）：
+    创建集合 → 灌发言 → 订阅 → 炼化 命令（首次重炼）→ 验证落库。
+
+    覆盖 commands + db + collector + ai + runner + format 全部模块。
+    """
+    from src.plugins.message_archive.db import archive_message_event
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import get_result, get_subscription_by_label
+    from src.plugins.un_nickname.db import add_collection_members
+
+    fixed_now = 1_800_000_000
+
+    # 1. 先建集合（2 个成员）
+    await add_collection_members("200001", "核心组", ["111", "222"])
+
+    # 2. 灌发言（>= refine_min_messages_to_refine=2）
+    for uid, mid in zip([111, 222], [101, 102], strict=True):
+        await archive_message_event(
+            _make_group_event(
+                f"集合成员{uid}的发言内容",
+                user_id=uid,
+                group_id=200001,
+                message_id=mid,
+                event_time=fixed_now - 600,
+                nickname=f"成员{uid}",
+            )
+        )
+
+    # 3. 订阅命令（用 collection: 写法）
+    subscribe_event = _make_group_event(
+        "炼化订阅 核心 collection:核心组", message_id=200
+    )
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, subscribe_event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            subscribe_event,
+            (
+                "✅ 已订阅 [核心] (集合=核心组)\n"
+                "发送 `炼化 核心` 查看结果（首次查询会触发提炼）"
+            ),
+            result={"message_id": 2000},
+        )
+
+    sub = await get_subscription_by_label("200001", "核心")
+    assert sub is not None
+    assert sub.target_type == "collection"
+    assert sub.target_value == "核心组"
+
+    # 4. 炼化命令（首次，触发实时提炼），patch AI 返回 + 时间稳定
+    fake_dt = _fake_dt()
+    lazy_event = _make_group_event(
+        "炼化 核心", message_id=201, event_time=fixed_now
+    )
+    # mute cache 在 first matcher 后是否被填充依赖 nonebug 实现细节，每 matcher
+    # 前手动清缓存 + 声明 mute API，保证测试稳定
+    from src import plugins as global_plugins
+
+    global_plugins._mute_cache.clear()
+    with (
+        patch(
+            "httpx.AsyncClient.post",
+            new=AsyncMock(return_value=_fake_ai_response("集合总结内容")),
+        ),
+        patch.object(commands, "datetime") as mock_dt,
+        patch("time.time", return_value=float(fixed_now)),
+    ):
+        mock_dt.fromtimestamp.return_value = fake_dt
+        async with app.test_matcher(commands.refine_lazy) as ctx:
+            bot = ctx.create_bot(base=Bot, self_id="987654321")
+            _expect_bot_not_muted(ctx)
+            ctx.receive_event(bot, lazy_event)
+            ctx.should_pass_rule()
+            ctx.should_call_send(
+                lazy_event,
+                "⏳ 正在为 [核心] 提炼，请稍候...",
+                result={"message_id": 2001},
+            )
+            ctx.should_call_send(
+                lazy_event,
+                (
+                    "🧪 炼化结果：[核心]\n"
+                    "目标：集合=核心组\n"
+                    "集合成员：2 人\n"
+                    "采样窗口：T ~ T\n"
+                    "采样消息：2 条\n"
+                    "模型：gpt-test\n"
+                    "\n"
+                    "集合总结内容"
+                ),
+                result={"message_id": 2002},
+            )
+
+    # 5. 验证落库
+    result = await get_result(sub.id)
+    assert result is not None
+    assert result.summary == "集合总结内容"
+    assert result.message_count == 2
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5. 强制炼化覆盖新鲜缓存
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_force_refine_overrides_fresh_cache(app: App) -> None:
+    """新鲜缓存下，`强制炼化` 应跳过新鲜检查并覆盖缓存。"""
+    from src.plugins.message_archive.db import archive_message_event
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import (
+        add_subscription,
+        get_result,
+        save_result,
+    )
+
+    fixed_now = 1_800_000_000
+
+    sub = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="目标"
+    )
+    assert sub is not None
+
+    # 1. 灌新鲜缓存（created_at 在 fresh_seconds 内）
+    await save_result(
+        subscription_id=sub.id,
+        period_start=fixed_now - 60,
+        period_end=fixed_now,
+        summary="新鲜但将被强制覆盖",
+        message_count=2,
+        model_name="gpt-test",
+    )
+
+    # 2. 灌发言供采集
+    for i in range(3):
+        await archive_message_event(
+            _make_group_event(
+                f"目标发言内容{i}",
+                user_id=555,
+                group_id=200001,
+                message_id=600 + i,
+                event_time=fixed_now - 600 + i * 60,
+                nickname="目标",
+            )
+        )
+
+    # 3. 强制炼化命令
+    fake_dt = _fake_dt()
+    force_event = _make_group_event(
+        "强制炼化 目标", message_id=700, event_time=fixed_now
+    )
+    with (
+        patch(
+            "httpx.AsyncClient.post",
+            new=AsyncMock(return_value=_fake_ai_response("强制重炼的新总结")),
+        ),
+        patch.object(commands, "datetime") as mock_dt,
+        patch("time.time", return_value=float(fixed_now)),
+    ):
+        mock_dt.fromtimestamp.return_value = fake_dt
+        async with app.test_matcher(commands.refine_force) as ctx:
+            bot = ctx.create_bot(base=Bot, self_id="987654321")
+            _expect_bot_not_muted(ctx)
+            ctx.receive_event(bot, force_event)
+            ctx.should_pass_rule()
+            ctx.should_call_send(
+                force_event,
+                "⏳ 正在为 [目标] 强制提炼，请稍候...",
+                result={"message_id": 7001},
+            )
+            ctx.should_call_send(
+                force_event,
+                (
+                    "🧪 炼化结果：[目标]\n"
+                    "目标：用户=555\n"
+                    "采样窗口：T ~ T\n"
+                    "采样消息：3 条\n"
+                    "模型：gpt-test\n"
+                    "\n"
+                    "强制重炼的新总结"
+                ),
+                result={"message_id": 7002},
+            )
+
+    # 4. 验证落库被覆盖
+    result = await get_result(sub.id)
+    assert result is not None
+    assert result.summary == "强制重炼的新总结"
+    assert result.message_count == 3

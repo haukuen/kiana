@@ -48,35 +48,33 @@ class Config(BaseModel):
         description="AI 采样温度",
     )
 
-    # ── 结果保留 ──────────────────────────────────────
-    refine_result_retention_days: int = Field(
-        default=3,
-        ge=1,
-        le=90,
-        description="炼化结果保留天数，超期自动清理",
+    # ── 缓存新鲜度与冷却 ──────────────────────────────
+    refine_result_fresh_seconds: int = Field(
+        default=86400,
+        ge=60,
+        le=604800,
+        description=(
+            "炼化结果新鲜期（秒）。在该时间内用 `炼化 <标签>` 命令查询，"
+            "直接返回缓存，不调 AI；超过该时间才触发重炼。默认 86400（24h）。"
+        ),
+    )
+    refine_query_cooldown_seconds: int = Field(
+        default=60,
+        ge=0,
+        le=3600,
+        description=(
+            "同一订阅两次重炼之间的冷却时间（秒）。冷却内的 `炼化` 命令直接返回旧缓存，"
+            "防止高频查询撑爆 AI 账单。`强制炼化` 命令忽略冷却。默认 60。"
+        ),
     )
 
-    # ── 调度 ──────────────────────────────────────────
-    refine_schedule_cron_hour: int = Field(
-        default=8,
-        ge=0,
-        le=23,
-        description="每日定时提炼的小时（0-23）。默认每天 08:00 跑一次。",
-    )
-    refine_schedule_cron_minute: int = Field(
-        default=0,
-        ge=0,
-        le=59,
-        description="每日定时提炼的分钟（0-59）",
-    )
+    # ── 采集窗口与 Prompt 预算 ─────────────────────────
     refine_lookback_hours: int = Field(
         default=24,
         ge=1,
         le=168,
         description="每次提炼回看最近多少小时的发言（1-168，即最多 7 天）",
     )
-
-    # ── Prompt 预算 ────────────────────────────────────
     refine_max_messages_per_target: int = Field(
         default=200,
         ge=1,

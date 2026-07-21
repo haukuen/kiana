@@ -1,14 +1,21 @@
 """炼化插件命令 handlers。
 
-6 个命令:
-- ``炼化订阅 <标签> <user:qq | collection:名 | 集合 名>``  新增订阅
-- ``炼化订阅列表``                                          列出本群订阅
-- ``炼化取消订阅 <标签>``                                   删除订阅
-- ``炼化查询 [标签]``                                       拉取最新结果（懒触发）
-- ``炼化刷新 <标签>``                                       立刻触发一次提炼
-- ``炼化帮助``                                              帮助
+6 个命令（v2 — 懒触发实时提炼）:
+- ``炼化订阅 <标签> <user:qq | collection:名 | 集合 名 | @某人>``  新增订阅
+- ``炼化订阅列表``                                              列出本群订阅
+- ``炼化取消订阅 <标签>``                                       删除订阅
+- ``炼化 <标签>``                                               懒触发：缓存新鲜直接返回，过期才重炼
+- ``强制炼化 <标签>``                                           跳过新鲜检查与冷却，强制重炼
+- ``炼化帮助``                                                  帮助
 
 权限: 所有用户可用（与 trawler 保持一致）。群权限由 group_rule 控制。
+
+工作机制:
+- ``炼化`` 命令查 ``refine_result`` 表：若结果在新鲜期内（``refine_result_fresh_seconds``）
+  直接返回缓存；否则实时提炼并落库。
+- 提炼冷却（``refine_query_cooldown_seconds``）内重复调用直接返回旧缓存，防止高频查询
+  撑爆 AI 账单。**不警告** —— 用户合理重复查询。
+- ``强制炼化`` 跳过新鲜检查与冷却，每次都重炼。
 
 注意: ``config`` 实例从 ``__init__.py`` 复用，避免每次 ``get_plugin_config`` 新建
 实例导致测试 setattr 与 group_rule 闭包取到不同实例。
@@ -16,6 +23,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from nonebot import on_command
@@ -38,16 +46,23 @@ from .db import (
     conflict_on_label,
     conflict_on_target,
     delete_subscription,
-    get_latest_result,
+    get_result,
     get_subscription_by_label,
     list_subscriptions,
 )
-from .exceptions import RefineConfigError
-from .runner import _validate_ai_config, refine_single_subscription
+from .exceptions import RefineAIError, RefineConfigError
+from .runner import refine_subscription, validate_ai_config
 
 config: Config = _refine_pkg.config
 
+# ── 冷却 dict ──────────────────────────────────────────
+# key: (group_id, label)，value: 上次重炼成功的 time.time() 时间戳。
+# 冷却期内 `炼化` 命令直接返回旧缓存；`强制炼化` 命令忽略此 dict。
+cooldown_dict: dict[tuple[str, str], float] = {}
+
 # ── 命令注册 ──────────────────────────────────────────
+# 注意：`强制炼化` 必须先于 `炼化` 注册，避免 NoneBot 命令匹配歧义
+# （虽然 on_command 是按完整命令名匹配，但保持显式顺序更安全）。
 refine_group_rule = create_group_rule(
     config_getter=lambda: config,
     plugin_enabled_attr="refine_plugin_enabled",
@@ -57,8 +72,9 @@ refine_group_rule = create_group_rule(
 refine_subscribe = on_command("炼化订阅", rule=refine_group_rule, block=True)
 refine_list = on_command("炼化订阅列表", rule=refine_group_rule, block=True)
 refine_unsubscribe = on_command("炼化取消订阅", rule=refine_group_rule, block=True)
-refine_query = on_command("炼化查询", rule=refine_group_rule, block=True)
-refine_refresh = on_command("炼化刷新", rule=refine_group_rule, block=True)
+# 强制炼化先注册
+refine_force = on_command("强制炼化", rule=refine_group_rule, block=True)
+refine_lazy = on_command("炼化", rule=refine_group_rule, block=True)
 refine_help = on_command("炼化帮助", rule=refine_group_rule, block=True)
 
 
@@ -108,6 +124,16 @@ def _format_result_block(
     return "\n".join(lines)
 
 
+def _format_old_result_age(created_at: int) -> str:
+    """把旧结果的 created_at 格式化为「X 小时前」/「X 分钟前」字符串。"""
+    delta = max(0, int(time.time()) - created_at)
+    hours = delta // 3600
+    if hours >= 1:
+        return f"{hours} 小时前"
+    minutes = max(1, delta // 60)
+    return f"{minutes} 分钟前"
+
+
 async def _resolve_collection_members(
     group_id: str, collection_name: str
 ) -> list[str]:
@@ -119,6 +145,86 @@ async def _resolve_collection_members(
     except ImportError:
         return []
     return await fetch_collection_members(group_id, collection_name)
+
+
+async def _resolve_members_for_sub(
+    sub: RefineSubscription, group_id: str
+) -> list[str] | None:
+    """如果是 collection 订阅，返回成员列表；否则返回 None。"""
+    if sub.target_type == "collection":
+        return await _resolve_collection_members(group_id, sub.target_value)
+    return None
+
+
+async def _return_cached_or_old_result(
+    matcher,
+    sub: RefineSubscription,
+    group_id: str,
+    result,
+    *,
+    prefix: str = "",
+) -> None:  # type: ignore[no-untyped-def]
+    """格式化并返回（缓存的或旧的）结果，可带警告前缀。"""
+    members = await _resolve_members_for_sub(sub, group_id)
+    block = _format_result_block(sub, result, members)
+    if prefix:
+        age = _format_old_result_age(result.created_at)
+        await matcher.finish(f"{prefix}（{age}）：\n\n{block}")
+    else:
+        await matcher.finish(block)
+
+
+async def _run_refine_and_reply(
+    matcher,
+    sub: RefineSubscription,
+    group_id: str,
+    label: str,
+    old_result,
+    *,
+    allow_old_fallback_on_insufficient: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    """执行 refine_subscription 并格式化输出。
+
+    - AI 异常：有旧结果→返回带警告的旧缓存；无旧结果→返回 ❌ 提炼失败。
+    - outcome.success=False：
+        * allow_old_fallback_on_insufficient=True 时（炼化 命令），
+          有旧结果→返回带警告的旧缓存；无旧结果→提示发言不足。
+        * False 时（强制炼化 命令）直接提示发言不足。
+    - success=True：更新冷却 dict，读回新结果，返回新结果。
+    """
+    try:
+        outcome = await refine_subscription(sub, config)
+    except RefineAIError as e:
+        if old_result is not None:
+            await _return_cached_or_old_result(
+                matcher, sub, group_id, old_result,
+                prefix="⚠️ AI 调用失败，显示上次结果",
+            )
+            return
+        await matcher.finish(f"❌ 提炼失败：{e}")
+        return
+    except RefineConfigError as e:  # pragma: no cover
+        await matcher.finish(f"❌ 配置错误：{e}")
+        return
+
+    if not outcome.success:
+        if allow_old_fallback_on_insufficient and old_result is not None:
+            await _return_cached_or_old_result(
+                matcher, sub, group_id, old_result,
+                prefix="⚠️ 目标近期发言不足，显示上次结果",
+            )
+            return
+        await matcher.finish("⚠️ 目标近期发言不足，请等目标多说话后重试")
+        return
+
+    cooldown_dict[(group_id, label)] = time.time()
+    new_result = await get_result(sub.id)
+    if new_result is None:  # pragma: no cover
+        await matcher.finish(
+            f"✅ [{label}] 已提炼，但读回结果失败，请用 炼化 {label} 重试"
+        )
+        return
+    await _return_cached_or_old_result(matcher, sub, group_id, new_result)
 
 
 # ── Handlers ─────────────────────────────────────────
@@ -193,9 +299,7 @@ async def _subscribe(event: GroupMessageEvent, args: Message = CommandArg()) -> 
     type_label = "用户" if target_type == "user" else "集合"
     await refine_subscribe.finish(
         f"✅ 已订阅 [{label}] ({type_label}={target_value})\n"
-        f"下次定时提炼：每日 {config.refine_schedule_cron_hour:02d}:"
-        f"{config.refine_schedule_cron_minute:02d}\n"
-        f"若需立即生成结果，发送：炼化刷新 {label}"
+        f"发送 `炼化 {label}` 查看结果（首次查询会触发提炼）"
     )
 
 
@@ -208,7 +312,7 @@ async def _list(event: GroupMessageEvent) -> None:
     lines = [f"📌 本群共 {len(subs)} 个炼化订阅:"]
     for sub in subs:
         lines.append(_format_subscription_line(sub))
-    lines.append("\n使用 `炼化查询 [标签]` 查看最新结果")
+    lines.append("\n使用 `炼化 <标签>` 查看或触发提炼")
     await refine_list.finish("\n".join(lines))
 
 
@@ -225,92 +329,92 @@ async def _unsubscribe(event: GroupMessageEvent, args: Message = CommandArg()) -
         await refine_unsubscribe.finish(f"未找到标签为「{label}」的订阅")
 
 
-@refine_query.handle()
-async def _query(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
-    label = args.extract_plain_text().strip()
-    group_id = str(event.group_id)
+@refine_lazy.handle()
+async def _lazy(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
+    """懒触发炼化：缓存新鲜直接返回；过期且不在冷却内才实时提炼。
 
-    if not label:
-        subs = await list_subscriptions(group_id)
-        if not subs:
-            await refine_query.finish("本群暂无订阅")
-            return
-        lines = [f"📋 本群 {len(subs)} 个订阅的最新结果:"]
-        for sub in subs:
-            result = await get_latest_result(sub.id)
-            if result is None:
-                lines.append(f"  • [{sub.label}] 暂无结果（等待定时提炼或炼化刷新）")
-            else:
-                preview = result.summary.replace("\n", " ")[:60]
-                ts = datetime.fromtimestamp(result.created_at).strftime(
-                    "%Y-%m-%d %H:%M"
-                )
-                lines.append(
-                    f"  • [{sub.label}] ({ts}, {result.message_count}条): {preview}..."
-                )
-        lines.append("\n使用 `炼化查询 <标签>` 查看完整结果")
-        await refine_query.finish("\n".join(lines))
-        return
-
-    sub = await get_subscription_by_label(group_id, label)
-    if sub is None:
-        await refine_query.finish(f"未找到标签为「{label}」的订阅")
-        return
-
-    result = await get_latest_result(sub.id)
-    if result is None:
-        await refine_query.finish(
-            f"订阅 [{label}] 暂无结果。发送 `炼化刷新 {label}` 立即生成"
-        )
-        return
-
-    members: list[str] | None = None
-    if sub.target_type == "collection":
-        members = await _resolve_collection_members(group_id, sub.target_value)
-
-    await refine_query.finish(_format_result_block(sub, result, members))
-
-
-@refine_refresh.handle()
-async def _refresh(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
+    - 新鲜期内 → 直接返回缓存
+    - 冷却期内（缓存不新鲜）→ 静默返回旧缓存（用户合理重复查询，不警告）
+    - 否则 → 实时提炼并落库
+    """
     label = args.extract_plain_text().strip()
     if not label:
-        await refine_refresh.finish("用法：炼化刷新 <标签>")
+        await refine_lazy.finish("用法：炼化 <标签>")
         return
 
     group_id = str(event.group_id)
     sub = await get_subscription_by_label(group_id, label)
     if sub is None:
-        await refine_refresh.finish(f"未找到标签为「{label}」的订阅")
+        await refine_lazy.finish(f"未找到标签为「{label}」的订阅")
         return
 
     try:
-        _validate_ai_config(config)
+        validate_ai_config(config)
     except RefineConfigError as e:
-        await refine_refresh.finish(f"❌ AI 配置缺失：{e}")
+        await refine_lazy.finish(f"❌ AI 配置缺失：{e}")
         return
 
-    await refine_refresh.send(f"⏳ 正在为 [{label}] 提炼，请稍候...")
+    result = await get_result(sub.id)
+    now = time.time()
 
-    outcome = await refine_single_subscription(sub, config)
-    if outcome.success:
-        result = await get_latest_result(sub.id)
-        if result is not None:
-            members: list[str] | None = None
-            if sub.target_type == "collection":
-                members = await _resolve_collection_members(group_id, sub.target_value)
-            await refine_refresh.finish(
-                _format_result_block(sub, result, members)
-            )
-            return
-        # pragma: no cover
-        await refine_refresh.finish(
-            f"✅ [{label}] 已提炼，但读回结果失败，请用 炼化查询 重试"
-        )
+    # 新鲜期内 → 直接返回缓存（不调 AI）
+    if result is not None and now - result.created_at < config.refine_result_fresh_seconds:
+        await _return_cached_or_old_result(refine_lazy, sub, group_id, result)
         return
 
-    await refine_refresh.finish(
-        f"⚠️ [{label}] 提炼未完成：{outcome.error or '未知原因'}"
+    # 冷却期内 → 静默返回旧缓存（用户合理重复查询）
+    last_refine_ts = cooldown_dict.get((group_id, label))
+    if (
+        result is not None
+        and last_refine_ts is not None
+        and now - last_refine_ts < config.refine_query_cooldown_seconds
+    ):
+        await _return_cached_or_old_result(refine_lazy, sub, group_id, result)
+        return
+
+    await refine_lazy.send(f"⏳ 正在为 [{label}] 提炼，请稍候...")
+
+    await _run_refine_and_reply(
+        refine_lazy,
+        sub,
+        group_id,
+        label,
+        result,
+        allow_old_fallback_on_insufficient=True,
+    )
+
+
+@refine_force.handle()
+async def _force(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
+    """强制炼化：跳过新鲜检查与冷却，每次都重炼。"""
+    label = args.extract_plain_text().strip()
+    if not label:
+        await refine_force.finish("用法：强制炼化 <标签>")
+        return
+
+    group_id = str(event.group_id)
+    sub = await get_subscription_by_label(group_id, label)
+    if sub is None:
+        await refine_force.finish(f"未找到标签为「{label}」的订阅")
+        return
+
+    try:
+        validate_ai_config(config)
+    except RefineConfigError as e:
+        await refine_force.finish(f"❌ AI 配置缺失：{e}")
+        return
+
+    await refine_force.send(f"⏳ 正在为 [{label}] 强制提炼，请稍候...")
+
+    result = await get_result(sub.id)
+
+    await _run_refine_and_reply(
+        refine_force,
+        sub,
+        group_id,
+        label,
+        result,
+        allow_old_fallback_on_insufficient=False,
     )
 
 
@@ -319,8 +423,8 @@ async def _help() -> None:
     lines = [
         "🧪 炼化插件帮助",
         "",
-        "订阅某个用户或某集合的发言，每日定时由 AI 生成简要总结；",
-        "结果默认保留 3 天（可配置）。不主动推送，需手动查询。",
+        "订阅某个用户或某集合的发言，按需用 AI 生成简要总结；",
+        "结果与订阅一一对应，新结果自动覆盖旧结果。",
         "",
         "命令：",
         "  炼化订阅 <标签> user:<qq>",
@@ -329,7 +433,7 @@ async def _help() -> None:
         "  炼化订阅 <标签> @某人",
         "  炼化订阅列表",
         "  炼化取消订阅 <标签>",
-        "  炼化查询 [标签]      # 不带标签则列出本群所有订阅的最新摘要",
-        "  炼化刷新 <标签>      # 立即重新提炼（覆盖最新结果）",
+        "  炼化 <标签>          # 缓存新鲜直接返回，过期才重炼",
+        "  强制炼化 <标签>      # 跳过新鲜检查与冷却，强制重炼",
     ]
     await refine_help.finish("\n".join(lines))

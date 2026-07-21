@@ -1,7 +1,9 @@
 """炼化插件持久层。
 
+数据模型（v2 — 懒重炼）:
 - ``refine_subscription``: 一个群内对某个目标的订阅（单用户或 un_nickname 集合）
-- ``refine_result``: 周期生成的 AI 总结，绑定订阅；保留期由 scheduler 清理
+- ``refine_result``: 与订阅 1:1 关系，每订阅最多 1 条；新结果 INSERT OR REPLACE
+  旧结果，无需清理 cron
 
 依赖 ``message_archive`` 表（由 ``src.plugins.message_archive.db.ensure_schema``
 创建）作为发言数据源；依赖 ``nickname_collections`` 表（由 ``un_nickname`` 创建）
@@ -32,7 +34,6 @@ class RefineSubscription:
 
 @dataclass(slots=True)
 class RefineResult:
-    id: int
     subscription_id: int
     period_start: int
     period_end: int
@@ -59,10 +60,11 @@ _SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_refine_subscription_group
     ON refine_subscription (group_id)
     """,
+    # v2: refine_result 与 subscription 1:1 关系，subscription_id 直接作主键。
+    # 新结果用 INSERT OR REPLACE 原子替换旧结果，不需要清理 cron。
     """
     CREATE TABLE IF NOT EXISTS refine_result (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        subscription_id INTEGER NOT NULL,
+        subscription_id INTEGER PRIMARY KEY,
         period_start    INTEGER NOT NULL,
         period_end      INTEGER NOT NULL,
         summary         TEXT NOT NULL,
@@ -71,10 +73,6 @@ _SCHEMA_STATEMENTS = [
         created_at      INTEGER NOT NULL,
         FOREIGN KEY (subscription_id) REFERENCES refine_subscription(id) ON DELETE CASCADE
     )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_refine_result_sub_period
-    ON refine_result (subscription_id, period_end)
     """,
 ]
 
@@ -101,7 +99,6 @@ def _row_to_subscription(row: sqlite3.Row) -> RefineSubscription:
 
 def _row_to_result(row: sqlite3.Row) -> RefineResult:
     return RefineResult(
-        id=row["id"],
         subscription_id=row["subscription_id"],
         period_start=row["period_start"],
         period_end=row["period_end"],
@@ -206,19 +203,10 @@ async def delete_subscription(*, group_id: str, label: str) -> bool:
     return True
 
 
-async def list_all_subscriptions() -> list[RefineSubscription]:
-    """全量订阅（scheduler 用）。"""
-    db = get_db()
-    rows = await db.fetch_all(
-        "SELECT * FROM refine_subscription ORDER BY group_id, created_at ASC"
-    )
-    return [_row_to_subscription(r) for r in rows]
+# ── 结果 CRUD（1:1，无清理）────────────────────────────
 
 
-# ── 结果 CRUD ──────────────────────────────────────────
-
-
-async def add_result(
+async def save_result(
     *,
     subscription_id: int,
     period_start: int,
@@ -227,59 +215,34 @@ async def add_result(
     message_count: int,
     model_name: str,
 ) -> RefineResult:
+    """保存炼化结果。与订阅 1:1，INSERT OR REPLACE 原子覆盖旧记录。"""
     db = get_db()
     now = int(time.time())
     await db.execute(
         """
-        INSERT INTO refine_result
+        INSERT OR REPLACE INTO refine_result
             (subscription_id, period_start, period_end, summary,
              message_count, model_name, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (subscription_id, period_start, period_end, summary, message_count, model_name, now),
     )
-    row = await db.fetch_one(
-        """
-        SELECT * FROM refine_result
-        WHERE subscription_id = ? AND created_at = ?
-        ORDER BY id DESC LIMIT 1
-        """,
-        (subscription_id, now),
+    return RefineResult(
+        subscription_id=subscription_id,
+        period_start=period_start,
+        period_end=period_end,
+        summary=summary,
+        message_count=message_count,
+        model_name=model_name,
+        created_at=now,
     )
-    if row is None:  # pragma: no cover  # 极端情况防御
-        raise RuntimeError("插入 refine_result 后无法读回")
-    return _row_to_result(row)
 
 
-async def get_latest_result(subscription_id: int) -> RefineResult | None:
+async def get_result(subscription_id: int) -> RefineResult | None:
+    """获取订阅的最新（且唯一）结果。"""
     db = get_db()
     row = await db.fetch_one(
-        """
-        SELECT * FROM refine_result
-        WHERE subscription_id = ?
-        ORDER BY period_end DESC, id DESC
-        LIMIT 1
-        """,
+        "SELECT * FROM refine_result WHERE subscription_id = ?",
         (subscription_id,),
     )
     return _row_to_result(row) if row else None
-
-
-async def purge_expired_results(retention_days: int) -> int:
-    """清理创建时间早于 ``retention_days`` 天的结果。返回删除条数。"""
-    if retention_days <= 0:
-        return 0
-    db = get_db()
-    cutoff = int(time.time()) - retention_days * 86400
-    row = await db.fetch_one(
-        "SELECT COUNT(*) AS c FROM refine_result WHERE created_at < ?",
-        (cutoff,),
-    )
-    before = row["c"] if row else 0
-    if before == 0:
-        return 0
-    await db.execute(
-        "DELETE FROM refine_result WHERE created_at < ?",
-        (cutoff,),
-    )
-    return before
