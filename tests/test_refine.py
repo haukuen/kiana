@@ -443,6 +443,347 @@ async def test_ai_response_format_error() -> None:
             )
 
 
+@pytest.mark.asyncio
+async def test_ai_5xx_classified_as_service_error() -> None:
+    """HTTP 5xx → RefineAIServiceError，消息包含 'HTTP 500'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIServiceError
+
+    response = httpx.Response(
+        500,
+        json={"error": "server"},
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIServiceError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "HTTP 500" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_request_error_classified_as_service_error() -> None:
+    """httpx.ConnectError（RequestError 子类）→ RefineAIServiceError，消息含 'AI 请求失败'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIServiceError
+
+    with patch(
+        "httpx.AsyncClient.post",
+        new=AsyncMock(side_effect=httpx.ConnectError("dns failed")),
+    ):
+        with pytest.raises(RefineAIServiceError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "AI 请求失败" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_array_content_parsed_correctly() -> None:
+    """OpenAI 新版 array content（纯 text 段）拼接 + strip。"""
+    from src.plugins.refine.ai import request_refine_summary
+
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "part1 "},
+                            {"type": "text", "text": "part2"},
+                        ],
+                    }
+                }
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        result = await request_refine_summary(
+            base_url="https://example.com/v1",
+            api_key="sk-test",
+            model="gpt-test",
+            timeout_seconds=10,
+            temperature=0.3,
+            prompt_payload="xxx",
+        )
+    assert result == "part1 part2"
+
+
+@pytest.mark.asyncio
+async def test_ai_array_content_skips_non_text_segments() -> None:
+    """array content 混入非 text 段（如 image_url）时只拼接 text 段。"""
+    from src.plugins.refine.ai import request_refine_summary
+
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": "xxx"}},
+                            {"type": "text", "text": "part1 "},
+                            {"type": "image_url", "image_url": {"url": "yyy"}},
+                            {"type": "text", "text": "part2"},
+                        ],
+                    }
+                }
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        result = await request_refine_summary(
+            base_url="https://example.com/v1",
+            api_key="sk-test",
+            model="gpt-test",
+            timeout_seconds=10,
+            temperature=0.3,
+            prompt_payload="xxx",
+        )
+    assert result == "part1 part2"
+
+
+@pytest.mark.asyncio
+async def test_ai_empty_content_raises_response_error() -> None:
+    """content="" → RefineAIResponseError，消息 'AI 输出内容为空'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {"message": {"role": "assistant", "content": ""}}
+            ]
+        },
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "AI 输出内容为空" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_missing_content_raises_response_error() -> None:
+    """message={}（无 content key）→ RefineAIResponseError，消息含 '可解析的 content'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json={"choices": [{"message": {}}]},
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "可解析的 content" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_missing_message_raises_response_error() -> None:
+    """choices=[{}]（无 message）→ RefineAIResponseError，消息 '响应中缺少 message'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json={"choices": [{}]},
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "响应中缺少 message" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_empty_choices_raises_response_error() -> None:
+    """choices=[] → RefineAIResponseError，消息 '响应中缺少 choices'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json={"choices": []},
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "响应中缺少 choices" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_missing_choices_raises_response_error() -> None:
+    """顶层无 choices key → RefineAIResponseError（extract_response_content 的第一个分支）。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json={},
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "响应中缺少 choices" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_non_json_body_raises_response_error() -> None:
+    """响应 body 不是合法 JSON → RefineAIResponseError，消息 'AI 接口返回的不是合法 JSON'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        text="not json at all",
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "AI 接口返回的不是合法 JSON" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_ai_non_dict_payload_raises_response_error() -> None:
+    """响应是合法 JSON 但顶层是 list → RefineAIResponseError，消息 'AI 接口响应格式不正确'。"""
+    from src.plugins.refine.ai import request_refine_summary
+    from src.plugins.refine.exceptions import RefineAIResponseError
+
+    response = httpx.Response(
+        200,
+        json=["not", "dict"],
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+    )
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+        with pytest.raises(RefineAIResponseError) as exc_info:
+            await request_refine_summary(
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+                model="gpt-test",
+                timeout_seconds=10,
+                temperature=0.3,
+                prompt_payload="xxx",
+            )
+    assert "AI 接口响应格式不正确" in str(exc_info.value)
+
+
+def test_ai_base_url_trailing_slash_handled() -> None:
+    """build_chat_completions_url 兼容尾斜杠 / 无尾斜杠两种写法。"""
+    from src.plugins.refine.ai import build_chat_completions_url
+
+    expected = "https://api.example.com/v1/chat/completions"
+    assert build_chat_completions_url("https://api.example.com/v1/") == expected
+    assert build_chat_completions_url("https://api.example.com/v1") == expected
+
+
+@pytest.mark.asyncio
+async def test_ai_request_body_structure() -> None:
+    """验证 request_refine_summary 构造的请求体与 headers 结构。"""
+    from src.plugins.refine.ai import request_refine_summary
+
+    captured: dict = {}
+
+    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        captured["headers"] = kwargs.get("headers")
+        return _fake_ai_response("ok")
+
+    with patch("httpx.AsyncClient.post", new=_fake_post):
+        result = await request_refine_summary(
+            base_url="https://example.com/v1/",
+            api_key="sk-test",
+            model="gpt-test",
+            timeout_seconds=30,
+            temperature=0.3,
+            prompt_payload="SOME PAYLOAD TEXT",
+        )
+
+    assert result == "ok"
+    assert captured["url"] == "https://example.com/v1/chat/completions"
+
+    body = captured["json"]
+    assert body["model"] == "gpt-test"
+    assert body["temperature"] == 0.3
+    assert len(body["messages"]) == 2
+    assert body["messages"][0]["role"] == "system"
+    assert body["messages"][1]["role"] == "user"
+    # system prompt 以 "你是" 开头
+    assert body["messages"][0]["content"].startswith("你是")
+    # user prompt 包含 "目标近期发言原文"
+    assert "目标近期发言原文" in body["messages"][1]["content"]
+    # payload 也应被嵌入
+    assert "SOME PAYLOAD TEXT" in body["messages"][1]["content"]
+
+    headers = captured["headers"]
+    assert headers["Authorization"] == "Bearer sk-test"
+    assert headers["Content-Type"] == "application/json"
+
+
 # ── commands 端到端（nonebug 标准模式） ────────────────
 
 
