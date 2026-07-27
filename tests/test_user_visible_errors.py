@@ -1,6 +1,10 @@
 def test_anime_trace_failure_messages_are_sanitized() -> None:
     from src.plugins.anime_trace import get_anime_trace_failure_message
-    from src.plugins.anime_trace.exceptions import APIRequestError, APIResponseError, ImageDownloadError
+    from src.plugins.anime_trace.exceptions import (
+        APIRequestError,
+        APIResponseError,
+        ImageDownloadError,
+    )
 
     assert get_anime_trace_failure_message(ImageDownloadError("boom")) == "下载图片失败，请稍后重试"
     assert get_anime_trace_failure_message(APIRequestError("boom")) == "搜番请求失败，请稍后重试"

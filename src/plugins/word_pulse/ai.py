@@ -241,6 +241,8 @@ _BATCH_CLASSIFY_SCHEMA = {
 _BATCH_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类簇定义，"
     "把每条消息归到一个最匹配的子类或 null（表示不属于该主题）。\n"
+    "子类描述中若带「别名:」后缀，表示该子类同时匹配这些别名表达，"
+    "归到该子类时按等同语义处理。\n"
     "必须返回严格 JSON，schema 形如：\n"
     '{"results": [{"id": <消息id>, "cluster": "子类名" 或 null}]}\n'
     "results 数组必须为每条输入消息返回一个条目，id 与输入消息的 [id] 对应。"
@@ -254,7 +256,10 @@ async def classify_batch(
 ) -> list[tuple[int, str | None]]:
     if not messages:
         return []
-    cluster_lines = "\n".join(f"- {c['name']}" for c in clusters)
+    cluster_lines = "\n".join(
+        f"- {c['name']}" + (f" (别名: {', '.join(c['aliases'])})" if c.get('aliases') else "")
+        for c in clusters
+    )
     all_results: list[tuple[int, str | None]] = []
     for start in range(0, len(messages), max_batch_size):
         chunk = messages[start:start + max_batch_size]

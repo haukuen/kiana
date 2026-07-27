@@ -32,6 +32,7 @@ async def load_plugins(_nonebot_init: None):
     load_plugin("src.plugins.a_share_sentiment")
     load_plugin("src.plugins.un_nickname")
     load_plugin("src.plugins.refine")
+    load_plugin("src.plugins.word_pulse")
 
     from src.plugins.message_archive.db import ensure_schema
     from src.plugins.refine.db import ensure_schema as ensure_refine_schema
@@ -88,6 +89,19 @@ async def reset_message_archive_table() -> None:
     await get_db().execute("DELETE FROM refine_subscription")
     await get_db().execute("DELETE FROM nicknames")
     await get_db().execute("DELETE FROM nickname_collections")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_word_pulse_tables() -> None:
+    """每个用例前清空 word_pulse 表。"""
+    from src.plugins.word_pulse.db import ensure_schema
+    from src.storage import get_db
+
+    ensure_schema()
+    await get_db().execute("DELETE FROM word_pulse_bucket")
+    await get_db().execute("DELETE FROM word_pulse_charset")
+    await get_db().execute("DELETE FROM word_pulse_cluster")
+    await get_db().execute("DELETE FROM word_pulse_theme")
 
 
 @pytest_asyncio.fixture

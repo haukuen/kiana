@@ -24,8 +24,18 @@ from .ai import (
 )
 from .analysis import build_summary_prompt, compute_or_load_buckets
 from .commands import parse_command, parse_query, resolve_window_days
-from .config import Config
+from .config import (
+    CLASSIFY_TEMPERATURE,
+    MAX_EXAMPLES_IN_SUMMARY,
+    QUERY_COOLDOWN_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    RESULT_CACHE_TTL_SECONDS,
+    SUMMARY_TEMPERATURE,
+    TODAY_BUCKET_FRESH_SECONDS,
+    Config,
+)
 from .db import (
+    add_cluster_aliases,
     add_clusters,
     delete_buckets_by_theme,
     delete_cluster,
@@ -36,6 +46,7 @@ from .db import (
     get_expanded_charset,
     get_theme,
     list_themes,
+    remove_cluster_aliases,
     replace_clusters,
     save_charsets,
     upsert_theme,
@@ -55,6 +66,8 @@ __plugin_meta__ = PluginMetadata(
         "词频 del 主题 —— 删除主题\n"
         "词频 del 主题 子类 —— 删除子类\n"
         "词频 refresh 主题 —— 刷新字符集\n"
+        "词频 alias 主题 主名词 别名1 别名2... —— 给子类添加别名\n"
+        "词频 unalias 主题 主名词 别名1... —— 删除子类别名\n"
         "总结 N天/周/月 主题 —— 查询热度统计"
     ),
     config=Config,
@@ -77,7 +90,10 @@ word_pulse_rule = create_group_rule(lambda: config, "word_pulse_plugin_enabled",
 
 # ── Matchers ──
 
-admin_matcher = on_regex(r"^词频\s+(add|append|list|del|refresh)\b.*", rule=word_pulse_rule, priority=5, block=True)
+admin_matcher = on_regex(
+    r"^词频\s+(add|append|list|del|refresh|alias|unalias)\b.*",
+    rule=word_pulse_rule, priority=5, block=True,
+)
 query_matcher = on_regex(r"^总结\s+\d+\s*(天|d|周|w|月|m)\s+\S+", rule=word_pulse_rule, priority=5, block=True)
 
 # ── Cooldown & Cache ──
@@ -92,7 +108,7 @@ class CachedResult:
 
 
 result_cache: dict[str, CachedResult] = {}
-_cache_ttl = config.word_pulse_cache_ttl_minutes * 60
+_cache_ttl = RESULT_CACHE_TTL_SECONDS
 
 
 def _cache_key(gid: int, theme: str, sig: str) -> str:
@@ -116,7 +132,7 @@ def _cooldown_remaining(gid: int) -> int:
     last = cooldown_dict.get(str(gid))
     if last is None:
         return 0
-    return max(0, int(last + config.word_pulse_cooldown_seconds - time.time()))
+    return max(0, int(last + QUERY_COOLDOWN_SECONDS - time.time()))
 
 
 def _mark_cooldown(gid: int) -> None:
@@ -154,7 +170,7 @@ async def _run_expand_or_degrade(*, theme_id: int, seeds: list[str], theme_name:
         charsets = await expand_charsets(
             base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
             model=config.word_pulse_model, seeds=seeds, theme=theme_name,
-            temperature=config.word_pulse_temperature, timeout=config.word_pulse_timeout_seconds,
+            temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
         await save_charsets(theme_id, charsets)
         await delete_buckets_by_theme(gid, theme_id)
@@ -180,6 +196,7 @@ async def handle_admin(event: MessageEvent) -> None:
     handlers = {
         "add": _handle_add, "append": _handle_append, "list": _handle_list,
         "del": _handle_del, "refresh": _handle_refresh,
+        "alias": _handle_alias, "unalias": _handle_unalias,
     }
     try:
         await handlers[cmd.action](ge, cmd)
@@ -217,7 +234,7 @@ async def _handle_append(event: GroupMessageEvent, cmd) -> None:
         charsets = await expand_charsets(
             base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
             model=config.word_pulse_model, seeds=new_seeds, theme=cmd.theme,
-            temperature=config.word_pulse_temperature, timeout=config.word_pulse_timeout_seconds,
+            temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
         await save_charsets(theme["id"], charsets)
     except WordPulseAIError as e:
@@ -234,8 +251,15 @@ async def _handle_list(event: GroupMessageEvent, _cmd=None) -> None:
     lines = ["📊 本群主题列表："]
     for t in themes:
         cls = await get_clusters(t["id"])
-        seeds = "、".join(c["name"] for c in cls) or "（无子类）"
-        lines.append(f"  · {t['name']} — {seeds}")
+        if not cls:
+            lines.append(f"  · {t['name']} — （无子类）")
+            continue
+        for c in cls:
+            aliases = c.get("aliases") or []
+            if aliases:
+                lines.append(f"  · {t['name']} / {c['name']}（别名: {'、'.join(aliases)}）")
+            else:
+                lines.append(f"  · {t['name']} / {c['name']}")
     await admin_matcher.finish("\n".join(lines))
 
 
@@ -275,6 +299,54 @@ async def _handle_refresh(event: GroupMessageEvent, cmd) -> None:
     await admin_matcher.finish(f"✓ 主题「{cmd.theme}」字符集已刷新（{len(seeds)} 个子类）\n  子类：{'、'.join(seeds)}")
 
 
+async def _handle_alias(event: GroupMessageEvent, cmd) -> None:
+    """词频 alias 主题 主名词 别名... —— 给子类批量添加别名。
+
+    cmd.seeds[0] = 主名词，cmd.seeds[1:] = 别名列表。
+    """
+    theme = await get_theme(str(event.group_id), cmd.theme)
+    if theme is None:
+        await admin_matcher.finish(f"本群尚未创建主题「{cmd.theme}」")
+        return
+    main_name, aliases = cmd.seeds[0], cmd.seeds[1:]
+    cls = await get_clusters(theme["id"])
+    target = [c for c in cls if c["name"] == main_name]
+    if not target:
+        await admin_matcher.finish(f"主题「{cmd.theme}」中没有子类「{main_name}」")
+        return
+    added = await add_cluster_aliases(target[0]["id"], aliases, theme_id=theme["id"])
+    # alias 变了，旧的日桶归类已过期，清掉让其重算
+    await delete_buckets_by_theme(str(event.group_id), theme["id"])
+    if not added:
+        await admin_matcher.finish(
+            f"未新增别名（全部为重复或与现有子类名冲突）：{'、'.join(aliases)}"
+        )
+        return
+    await admin_matcher.finish(
+        f"✓ 已为「{main_name}」添加别名：{'、'.join(added)}"
+    )
+
+
+async def _handle_unalias(event: GroupMessageEvent, cmd) -> None:
+    """词频 unalias 主题 主名词 别名... —— 删除子类别名。"""
+    theme = await get_theme(str(event.group_id), cmd.theme)
+    if theme is None:
+        await admin_matcher.finish(f"本群尚未创建主题「{cmd.theme}」")
+        return
+    main_name, aliases = cmd.seeds[0], cmd.seeds[1:]
+    cls = await get_clusters(theme["id"])
+    target = [c for c in cls if c["name"] == main_name]
+    if not target:
+        await admin_matcher.finish(f"主题「{cmd.theme}」中没有子类「{main_name}」")
+        return
+    removed = await remove_cluster_aliases(target[0]["id"], aliases)
+    await delete_buckets_by_theme(str(event.group_id), theme["id"])
+    if not removed:
+        await admin_matcher.finish(f"未删除任何别名（不存在的别名被忽略）：{'、'.join(aliases)}")
+        return
+    await admin_matcher.finish(f"✓ 已从「{main_name}」删除别名：{'、'.join(removed)}")
+
+
 # ── Query handler ──
 
 
@@ -296,13 +368,13 @@ async def _resolve_query_target(ge: GroupMessageEvent, query) -> tuple[dict, lis
 async def _run_summary(*, query, theme: dict, clusters: list[dict], buckets: list[dict], window_desc: str) -> str:
     prompt = build_summary_prompt(
         theme_name=query.theme, clusters=clusters, buckets=buckets,
-        window_meta=window_desc, max_examples=config.word_pulse_max_examples_in_summary,
+        window_meta=window_desc, max_examples=MAX_EXAMPLES_IN_SUMMARY,
     )
     try:
         summary = await summarize(
             base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
             model=config.word_pulse_model, prompt=prompt,
-            temperature=config.word_pulse_summary_temperature, timeout=config.word_pulse_timeout_seconds,
+            temperature=SUMMARY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except WordPulseAITimeoutError:
         return "AI 总结超时，请稍后重试"
@@ -357,17 +429,27 @@ async def handle_query(event: MessageEvent) -> None:
 
 async def _compute_buckets(ge: GroupMessageEvent, query, theme: dict, clusters: list[dict], total_days: int) -> list[dict]:
     seed_chars = set("".join(c["name"] for c in clusters))
+    # 主名词 + 别名 都参与粗筛字符池（别名里的字也算相关字）
+    alias_chars = set("".join("".join(c.get("aliases") or []) for c in clusters))
     expanded = await get_expanded_charset(theme["id"])
-    char_pool = seed_chars | expanded
-    cluster_terms = {c["name"]: {c["name"]} for c in clusters}
+    char_pool = seed_chars | alias_chars | expanded
+    # 关键：cluster_terms 把别名并入主名词，使别名消息在弱预筛阶段就被正确归类
+    cluster_terms = {
+        c["name"]: {c["name"], *(c.get("aliases") or [])} for c in clusters
+    }
+    # 给 GREY 阶段 classify_batch 用的 cluster 结构必须含 aliases
+    clusters_for_classify = [
+        {"name": c["name"], "aliases": c.get("aliases") or []} for c in clusters
+    ]
     return await compute_or_load_buckets(
-        group_id=str(ge.group_id), theme_id=theme["id"], theme_name=query.theme, clusters=clusters,
-        char_pool=char_pool, cluster_terms=cluster_terms, day_range=total_days,
+        group_id=str(ge.group_id), theme_id=theme["id"], theme_name=query.theme,
+        clusters=clusters_for_classify, char_pool=char_pool, cluster_terms=cluster_terms,
+        day_range=total_days,
         base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key, model=config.word_pulse_model,
         max_messages_per_bucket=config.word_pulse_max_messages_per_bucket,
         max_sample_per_cluster=config.word_pulse_max_sample_per_cluster,
-        temperature=config.word_pulse_temperature, timeout=config.word_pulse_timeout_seconds,
-        today_bucket_fresh_seconds=config.word_pulse_today_bucket_fresh_seconds,
+        temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
+        today_bucket_fresh_seconds=TODAY_BUCKET_FRESH_SECONDS,
     )
 
 

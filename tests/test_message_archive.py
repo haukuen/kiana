@@ -2,7 +2,12 @@ from datetime import datetime
 from unittest.mock import patch
 
 import pytest
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import (
+    GroupMessageEvent,
+    Message,
+    MessageSegment,
+    PrivateMessageEvent,
+)
 from nonebot.adapters.onebot.v11.event import Sender
 
 
@@ -274,7 +279,7 @@ async def test_archive_persists_image_when_enabled(tmp_path, monkeypatch) -> Non
 @pytest.mark.asyncio
 async def test_archive_skips_image_when_disabled(tmp_path, monkeypatch) -> None:
     """image_enabled=False 时不下载图片。"""
-    from src.plugins.message_archive import image_store, db as archive_db
+    from src.plugins.message_archive import db as archive_db, image_store
     from src.plugins.message_archive.db import archive_message_event
 
     monkeypatch.setattr(image_store, "image_dir", tmp_path)
@@ -298,7 +303,7 @@ async def test_archive_skips_image_when_disabled(tmp_path, monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_archive_caps_image_count(tmp_path, monkeypatch) -> None:
     """单条消息图片数超过 max_count 时只存前 N 张。"""
-    from src.plugins.message_archive import image_store, db as archive_db
+    from src.plugins.message_archive import db as archive_db, image_store
     from src.plugins.message_archive.db import archive_message_event
     from tests.message_store_helpers import make_image_bytes
 
