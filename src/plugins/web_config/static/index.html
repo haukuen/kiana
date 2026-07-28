@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kiana 配置中心</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus@2.x/dist/index.css">
+  <script src="https://unpkg.com/vue@3.x/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus@2.x/dist/index.full.min.js"></script>
+  <script src="https://unpkg.com/element-plus@2.x/dist/locale/zh-cn.min.js"></script>
+  <style>
+    /* ================= 主题变量:青绿清新系 ================= */
+    :root {
+      /* 覆盖 Element Plus 主色 -> teal #14b8a6,全组件跟随 */
+      --el-color-primary: #14b8a6;
+      --el-color-primary-light-3: #5bcdc1;
+      --el-color-primary-light-5: #8adcd3;
+      --el-color-primary-light-7: #b9eae4;
+      --el-color-primary-light-8: #d0f1ed;
+      --el-color-primary-light-9: #e8f8f6;
+      --el-color-primary-dark-2: #109385;
+      /* 文字/边框/填充色一并换成 slate + 薄荷系,保持整体协调 */
+      --el-text-color-primary: #1e293b;
+      --el-text-color-regular: #475569;
+      --el-text-color-secondary: #64748b;
+      --el-text-color-placeholder: #9fb0c0;
+      --el-border-color: #d9e4e4;
+      --el-border-color-light: #e3ebeb;
+      --el-border-color-lighter: #eaf1f1;
+      --el-border-color-extra-light: #f0f6f5;
+      --el-fill-color-light: #f1f7f6;
+      --el-border-radius-base: 8px;
+      --el-border-radius-small: 6px;
+      --el-border-radius-round: 999px;
+      --el-font-family: inherit;
+      /* 品牌渐变:teal -> cyan */
+      --brand-grad: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      /* 极浅薄荷灰渐变底,替代死灰 */
+      background: linear-gradient(150deg, #f0fdfa 0%, #f5fafb 45%, #f8fafc 100%);
+      color: #1e293b;
+      line-height: 1.5;
+    }
+
+    /* 背景氛围光斑(纯 CSS,无外部图片) */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(640px 320px at 88% -6%, rgba(20, 184, 166, 0.10), transparent 62%),
+        radial-gradient(560px 300px at -8% 108%, rgba(6, 182, 212, 0.08), transparent 60%);
+    }
+
+    ::selection { background: rgba(20, 184, 166, 0.22); }
+
+    #app {
+      position: relative;
+      z-index: 1;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ================= 顶栏 ================= */
+    .app-header {
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+    }
+    .app-header .title-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .app-header .title-texts {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .app-header h1 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.2px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .app-header h1 .brand-text {
+      background: linear-gradient(120deg, #0d9488 10%, #06b6d4 90%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+    .app-header .subtitle {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+    .global-modified-badge {
+      font-size: 12px;
+      font-weight: 500;
+      color: #b45309;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      border-radius: 999px;
+      padding: 2px 10px;
+      margin-left: 10px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    /* 顶栏"保存全部":渐变底 + hover 加亮微抬升 */
+    .app-header .el-button--primary {
+      background: var(--brand-grad);
+      border: none;
+      border-radius: 10px;
+      padding: 10px 22px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      box-shadow: 0 4px 12px rgba(20, 184, 166, 0.35);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    }
+    .app-header .el-button--primary:not(.is-disabled):hover {
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+      box-shadow: 0 7px 18px rgba(20, 184, 166, 0.42);
+    }
+    .app-header .el-button--primary:not(.is-disabled):active {
+      transform: translateY(0);
+      filter: brightness(0.97);
+    }
+    .app-header .el-button--primary.is-disabled,
+    .app-header .el-button--primary.is-disabled:hover {
+      background: #e3f4f1;
+      color: #93cec3;
+      box-shadow: none;
+      transform: none;
+      filter: none;
+    }
+
+    /* ================= 布局 ================= */
+    .app-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ================= 侧边栏 ================= */
+    .sidebar {
+      width: 216px;
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-right: 1px solid rgba(15, 23, 42, 0.06);
+      overflow-y: auto;
+      flex-shrink: 0;
+      padding: 10px 0 16px;
+    }
+    .sidebar .plugin-item {
+      position: relative;
+      margin: 2px 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+      border-radius: 12px;
+      transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+      font-size: 14px;
+      color: #475569;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .sidebar .plugin-item:hover {
+      background: rgba(204, 251, 241, 0.55);
+      color: #0f766e;
+    }
+    .sidebar .plugin-item.active {
+      background: linear-gradient(90deg, #ccfbf1, #e0faf3);
+      color: #0f766e;
+      font-weight: 600;
+      box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18), 0 2px 6px rgba(20, 184, 166, 0.12);
+    }
+    .sidebar .plugin-item .plugin-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sidebar .plugin-item .modified-dot {
+      margin-left: auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f59e0b;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+    @keyframes dotPulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18); }
+      50% { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.08); }
+    }
+
+    /* ================= 主区 ================= */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 26px 34px 40px;
+    }
+    .plugin-header {
+      margin-bottom: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      max-width: 860px;
+    }
+    .plugin-header h2 {
+      margin: 0 0 6px 0;
+      font-size: 21px;
+      font-weight: 700;
+      color: #1e293b;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .plugin-header h2::before {
+      content: '';
+      width: 6px;
+      height: 20px;
+      border-radius: 3px;
+      background: var(--brand-grad);
+      flex-shrink: 0;
+    }
+    .plugin-header .desc {
+      font-size: 13px;
+      color: #64748b;
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* ================= 字段卡片 ================= */
+    .field-row {
+      margin-bottom: 16px;
+      max-width: 860px;
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 22px;
+      border: 1px solid #eaf1f1;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 4px 14px rgba(15, 23, 42, 0.04);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+    }
+    .field-row:hover {
+      transform: translateY(-2px);
+      border-color: #99f6e4;
+      box-shadow: 0 2px 4px rgba(15, 23, 42, 0.04), 0 10px 26px rgba(13, 148, 136, 0.10);
+    }
+    .field-row.modified {
+      border-left: 4px solid #f59e0b;
+      background: linear-gradient(90deg, #fffbeb 0%, #fffdf6 45%, #ffffff 100%);
+    }
+    .field-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      flex-wrap: wrap;
+    }
+    .field-label .label-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .field-label .field-key {
+      font-size: 11.5px;
+      color: #0f766e;
+      background: #eafaf7;
+      border: 1px solid #ccfbf1;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    }
+    .field-label .modified-flag {
+      font-size: 11px;
+      font-weight: 600;
+      color: #b45309;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      border-radius: 999px;
+      padding: 1px 8px;
+      line-height: 1.6;
+    }
+    .field-desc {
+      font-size: 12.5px;
+      color: #64748b;
+      margin-bottom: 10px;
+      line-height: 1.6;
+    }
+    .field-control {
+      width: 100%;
+      max-width: 600px;
+    }
+    .field-control .el-input-number { width: 200px; }
+    .field-control .el-textarea__inner {
+      font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    /* 标签输入(list_string) */
+    .tag-input-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .tag-input-row .tags-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .el-tag {
+      border-radius: 999px;
+      font-weight: 500;
+    }
+
+    /* list_object 子卡片:白底 + 细边框 + 圆角 + 轻阴影 */
+    .list-object-item {
+      border: 1px solid #e7efef;
+      border-radius: 12px;
+      padding: 16px 18px 4px;
+      margin-bottom: 12px;
+      background: #fff;
+      position: relative;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .list-object-item:hover {
+      border-color: #99f6e4;
+      box-shadow: 0 4px 14px rgba(13, 148, 136, 0.08);
+    }
+    .list-object-item .item-title {
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      color: #0f766e;
+      background: #f0fdfa;
+      border: 1px solid #ccfbf1;
+      border-radius: 999px;
+      padding: 3px 12px;
+      margin-bottom: 14px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .list-object-item .remove-btn {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+    }
+    .list-object-item .el-form-item { margin-bottom: 14px; }
+    .list-object-item .el-form-item__label {
+      color: #475569;
+      font-weight: 500;
+    }
+
+    /* ================= 空状态 / 加载态 ================= */
+    .empty-state {
+      text-align: center;
+      padding: 90px 20px;
+      color: #7c8b9a;
+      font-size: 14.5px;
+      line-height: 1.7;
+    }
+    .empty-state .empty-emoji {
+      font-size: 46px;
+      line-height: 1;
+      margin-bottom: 14px;
+      filter: drop-shadow(0 4px 10px rgba(20, 184, 166, 0.22));
+    }
+    .sidebar .empty-state { font-size: 13px; }
+    .sidebar .empty-state .empty-emoji { font-size: 30px; margin-bottom: 8px; }
+
+    .loading-mask {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      flex-direction: column;
+      gap: 14px;
+      color: #0d9488;
+      font-size: 14px;
+      letter-spacing: 1px;
+    }
+    .loading-mask .el-icon { color: var(--el-color-primary); }
+
+    /* ================= 错误态 ================= */
+    .field-error {
+      color: #ef4444;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .json-error .el-textarea__inner {
+      box-shadow: 0 0 0 1px #ef4444 inset !important;
+    }
+
+    /* ================= Element Plus 细节打磨 ================= */
+    .el-button { transition: all 0.2s ease; }
+    .el-dialog {
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+    }
+    .el-dialog__header { padding: 20px 24px 10px; }
+    .el-dialog__title { font-weight: 700; font-size: 17px; color: #1e293b; }
+    .el-dialog__body { padding: 14px 24px 20px; }
+    .el-dialog__footer { padding: 10px 24px 20px; }
+
+    /* 输入控件聚焦:青色描边 + 柔和外发光 */
+    .el-input__wrapper.is-focus,
+    .el-select__wrapper.is-focused,
+    .el-textarea__inner:focus {
+      box-shadow: 0 0 0 1px var(--el-color-primary) inset, 0 0 0 4px rgba(20, 184, 166, 0.14);
+    }
+
+    /* 滚动条 */
+    .sidebar::-webkit-scrollbar, .main::-webkit-scrollbar { width: 8px; }
+    .sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb {
+      background: rgba(20, 184, 166, 0.22);
+      border-radius: 4px;
+    }
+    .sidebar::-webkit-scrollbar-thumb:hover, .main::-webkit-scrollbar-thumb:hover {
+      background: rgba(20, 184, 166, 0.4);
+    }
+    .sidebar::-webkit-scrollbar-track, .main::-webkit-scrollbar-track { background: transparent; }
+
+    /* ================= 响应式:窄屏收窄侧边栏 ================= */
+    @media (max-width: 760px) {
+      .sidebar { width: 132px; }
+      .sidebar .plugin-item { padding: 8px 10px; font-size: 13px; }
+      .main { padding: 18px 16px 32px; }
+      .app-header { padding: 0 16px; }
+      .app-header .subtitle { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="app-header">
+      <div class="title-area">
+        <div class="title-texts">
+          <h1><span class="brand-text">kiana 配置中心</span><span v-if="modifiedCount > 0" class="global-modified-badge">{{ modifiedCount }} 项未保存</span></h1>
+          <span class="subtitle">保存后需要手动重启容器生效</span>
+        </div>
+      </div>
+      <el-button type="primary" :loading="saving" :disabled="modifiedCount === 0" @click="saveAll">
+        保存全部
+      </el-button>
+    </div>
+
+    <div class="app-body">
+      <div class="sidebar">
+        <div
+          v-for="p in sortedPlugins"
+          :key="p.plugin_name"
+          class="plugin-item"
+          :class="{ active: currentPluginName === p.plugin_name }"
+          @click="selectPlugin(p.plugin_name)"
+        >
+          <span class="plugin-name">{{ p.display_name || p.plugin_name }}</span>
+          <span class="modified-dot" v-if="pluginModifiedCount(p.plugin_name) > 0"></span>
+        </div>
+        <div v-if="plugins.length === 0 && !loading" class="empty-state" style="padding: 40px 12px;">
+          <div class="empty-emoji">🧩</div>
+          暂无插件
+        </div>
+      </div>
+
+      <div class="main">
+        <div v-if="loading" class="loading-mask">
+          <el-icon class="is-loading" :size="28"><loading /></el-icon>
+          <span>加载中...</span>
+        </div>
+
+        <div v-else-if="!currentPlugin" class="empty-state">
+          <div class="empty-emoji">🌿</div>
+          请在左侧选择一个插件
+        </div>
+
+        <template v-else>
+          <div class="plugin-header">
+            <h2>{{ currentPlugin.display_name || currentPlugin.plugin_name }}</h2>
+            <p class="desc" v-if="currentPlugin.description">{{ currentPlugin.description }}</p>
+          </div>
+
+          <template v-for="field in currentPluginFields">
+            <div
+              v-if="field"
+              :key="field.key"
+              class="field-row"
+              :class="{ modified: isModified(field.key) }"
+            >
+              <div class="field-label">
+                <span class="label-text">{{ field.label || field.key }}</span>
+                <span class="field-key">{{ field.key }}</span>
+                <span v-if="isModified(field.key)" class="modified-flag">已修改</span>
+              </div>
+              <div class="field-desc" v-if="field.description">{{ field.description }}</div>
+
+              <div class="field-control">
+                <!-- safe render dispatch -->
+                <component
+                  :is="renderFieldComponent(field)"
+                  v-if="!fieldErrors[field.key]"
+                  :field="field"
+                  :value="formValues[field.key]"
+                  @update="updateFieldValue(field.key, $event)"
+                  @parse-error="onParseError(field.key, $event)"
+                />
+
+                <div v-if="fieldErrors[field.key]" class="field-error">
+                  字段渲染失败:{{ fieldErrors[field.key] }}
+                </div>
+              </div>
+            </div>
+          </template>
+        </template>
+      </div>
+    </div>
+
+    <!-- Password dialog -->
+    <el-dialog v-model="pwdDialogVisible" title="需要口令" width="380px" :close-on-click-modal="false" :show-close="!pwdLoading">
+      <el-form @submit.native.prevent="submitPassword">
+        <el-form-item label="访问口令">
+          <el-input v-model="pwdInput" type="password" show-password placeholder="请输入口令" autocomplete="off" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdDialogVisible = false" :disabled="pwdLoading">取消</el-button>
+        <el-button type="primary" :loading="pwdLoading" @click="submitPassword">确定</el-button>
+      </template>
+    </el-dialog>
+  </div>
+
+  <script>
+    // ============================================================
+    // MOCK data for local debugging. Set USE_MOCK = true to test
+    // rendering without the backend. In production, this HTML is
+    // served by FastAPI and real APIs are called.
+    // ============================================================
+    const USE_MOCK = false;
+    const MOCK_SCHEMA = [
+      {
+        plugin_name: "refine",
+        display_name: "refine",
+        description: "炼化:订阅群聊发言人/集合,懒触发实时提炼 AI 总结",
+        fields: [
+          { key: "refine_plugin_enabled", label: "是否启用炼化插件", type: "bool", default: false, secret: false },
+          { key: "refine_group_mode", label: "群组控制模式", type: "enum", options: ["all", "whitelist", "blacklist"], default: "all" },
+          { key: "refine_ai_api_key", label: "OpenAI 兼容接口的 API Key", type: "string", secret: true, default: "" },
+          { key: "refine_lookback_hours", label: "回看小时数", type: "int", min: 1, max: 168, default: 24 },
+          { key: "refine_temperature", label: "温度", type: "float", min: 0, max: 2, default: 0.3 },
+          { key: "refine_group_whitelist", label: "白名单群", type: "list_string", default: [] },
+          {
+            key: "gotify_app_rules", label: "App 规则", type: "list_object", default: [], subfields: [
+              { key: "app_id", label: "App ID", type: "string" },
+              { key: "forward_users", label: "用户", type: "list_string" },
+              { key: "forward_groups", label: "群", type: "list_string" }
+            ]
+          },
+          { key: "API_HEADERS", label: "API Headers", type: "json", default: {} }
+        ]
+      }
+    ];
+    const MOCK_CONFIG = {
+      refine_plugin_enabled: true,
+      refine_group_mode: "whitelist",
+      refine_ai_api_key: "sk-test-xxx",
+      refine_lookback_hours: 48,
+      refine_temperature: 0.5,
+      refine_group_whitelist: ["111", "222"],
+      gotify_app_rules: [
+        { app_id: "abc", forward_users: ["u1"], forward_groups: ["g1"] }
+      ],
+      API_HEADERS: { "X-Custom": "foo" }
+    };
+
+    const { createApp, h, defineComponent, reactive, ref, computed, toRefs } = Vue;
+    // Element Plus 组件解构:CDN 全局注册后挂在 window.ElementPlus 命名空间下,
+    // 这里取出来给 h() 函数直接引用,避免在模板中依赖全局自动解析。
+    const {
+      ElSwitch, ElInput, ElInputNumber, ElSelect, ElOption,
+      ElTag, ElButton, ElForm, ElFormItem
+    } = ElementPlus;
+
+    // ============================================================
+    // HTTP helper with auth + 401 handling
+    // ============================================================
+    const TOKEN_KEY = 'kiana_web_config_token';
+
+    function getToken() {
+      try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
+    }
+    function setToken(t) {
+      try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+    }
+
+    async function apiRequest(method, path, body) {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = getToken();
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+
+      const opts = { method, headers };
+      if (body !== undefined) opts.body = JSON.stringify(body);
+
+      const resp = await fetch(path, opts);
+
+      if (resp.status === 401 || resp.status === 403) {
+        const err = new Error('UNAUTHORIZED');
+        err.status = resp.status;
+        err._unauthorized = true;
+        throw err;
+      }
+
+      let data = null;
+      const text = await resp.text();
+      if (text) {
+        try { data = JSON.parse(text); } catch (e) { data = text; }
+      }
+
+      if (!resp.ok) {
+        const msg = (data && (data.detail || data.message)) || ('HTTP ' + resp.status);
+        const err = new Error(msg);
+        err.status = resp.status;
+        err.data = data;
+        throw err;
+      }
+      return data;
+    }
+
+    // ============================================================
+    // Field renderer sub-components (one per type)
+    // Each is defensive: if anything throws, the parent catches
+    // and shows fieldErrors[key].
+    // ============================================================
+
+    // bool
+    const BoolField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      render() {
+        const f = this.field || {};
+        const v = this.value === undefined || this.value === null ? !!f.default : !!this.value;
+        return h(ElSwitch, {
+          modelValue: v,
+          'onUpdate:modelValue': (val) => this.$emit('update', !!val)
+        });
+      }
+    });
+
+    // int
+    const IntField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      render() {
+        const f = this.field || {};
+        let v = this.value === undefined || this.value === null ? f.default : this.value;
+        if (typeof v === 'string') v = Number(v);
+        const props = {
+          modelValue: v,
+          'onUpdate:modelValue': (val) => this.$emit('update', (val === undefined || val === null) ? (f.default || 0) : val),
+          controlsPosition: 'right',
+          precision: 0,
+          step: 1
+        };
+        if (typeof f.min === 'number') props.min = f.min;
+        if (typeof f.max === 'number') props.max = f.max;
+        return h(ElInputNumber, props);
+      }
+    });
+
+    // float
+    const FloatField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      render() {
+        const f = this.field || {};
+        let v = this.value === undefined || this.value === null ? f.default : this.value;
+        if (typeof v === 'string') v = Number(v);
+        const props = {
+          modelValue: v,
+          step: 0.1,
+          'onUpdate:modelValue': (val) => this.$emit('update', (val === undefined || val === null) ? (f.default || 0) : val),
+          controlsPosition: 'right'
+        };
+        if (typeof f.min === 'number') props.min = f.min;
+        if (typeof f.max === 'number') props.max = f.max;
+        return h(ElInputNumber, props);
+      }
+    });
+
+    // string (with secret option)
+    const StringField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      data() { return { showPwd: false }; },
+      render() {
+        const f = this.field || {};
+        const v = this.value === undefined || this.value === null ? (f.default !== undefined ? f.default : '') : this.value;
+        const secret = !!f.secret;
+        const props = {
+          modelValue: v,
+          'onUpdate:modelValue': (val) => this.$emit('update', val),
+          placeholder: ''
+        };
+        if (secret) {
+          props.type = this.showPwd ? 'text' : 'password';
+          props.showPassword = true;
+        }
+        return h(ElInput, props);
+      }
+    });
+
+    // enum
+    const EnumField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      render() {
+        const f = this.field || {};
+        const opts = Array.isArray(f.options) ? f.options : [];
+        const v = this.value === undefined || this.value === null ? f.default : this.value;
+        const children = opts.map(opt =>
+          h(ElOption, { key: String(opt), label: String(opt), value: opt })
+        );
+        return h(ElSelect, {
+          modelValue: v,
+          'onUpdate:modelValue': (val) => this.$emit('update', val)
+        }, () => children);
+      }
+    });
+
+    // list_string -> tag input
+    const ListStringField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      data() {
+        return { inputValue: '' };
+      },
+      methods: {
+        current() {
+          const f = this.field || {};
+          let v = Array.isArray(this.value) ? this.value.slice()
+            : (Array.isArray(f.default) ? f.default.slice() : []);
+          return v.map(x => (x === null || x === undefined) ? '' : String(x));
+        },
+        removeTag(idx) {
+          const arr = this.current();
+          arr.splice(idx, 1);
+          this.$emit('update', arr);
+        },
+        addTag() {
+          const val = (this.inputValue || '').trim();
+          if (!val) return;
+          const arr = this.current();
+          arr.push(val);
+          this.inputValue = '';
+          this.$emit('update', arr);
+        }
+      },
+      render() {
+        const arr = this.current();
+        const tags = arr.map((t, idx) =>
+          h(ElTag, {
+            key: idx,
+            closable: true,
+            onClose: () => this.removeTag(idx),
+            style: 'margin-right: 6px; margin-bottom: 6px;'
+          }, () => t)
+        );
+        const input = h(ElInput, {
+          modelValue: this.inputValue,
+          'onUpdate:modelValue': (v) => { this.inputValue = v; },
+          size: 'small',
+          style: 'width: 160px;',
+          placeholder: '输入后回车添加',
+          onKeydown: (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); this.addTag(); }
+          }
+        });
+        const btn = h(ElButton, {
+          size: 'small',
+          onClick: () => this.addTag()
+        }, () => '添加');
+        return h('div', { class: 'tag-input-row' }, [
+          h('div', { class: 'tags-wrap' }, tags),
+          input,
+          btn
+        ]);
+      }
+    });
+
+    // list_object -> dynamic cards
+    const ListObjectField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      data() {
+        // reactive cache for transient sub-field inputs (e.g. tag input box,
+        // json textarea raw text) keyed by `${itemIdx}_${subKey}`.
+        // Using Vue.set-style reassignment since keys are dynamic.
+        return { _subInputCache: {} };
+      },
+      methods: {
+        _cacheGet(key, fallback) {
+          const v = this._subInputCache[key];
+          return (v === undefined) ? fallback : v;
+        },
+        _cacheSet(key, val) {
+          // reassign whole object for reactivity (Options API + dynamic keys)
+          this._subInputCache = { ...this._subInputCache, [key]: val };
+        },
+        current() {
+          const f = this.field || {};
+          let v = Array.isArray(this.value) ? this.value
+            : (Array.isArray(f.default) ? f.default : []);
+          // shallow clone each item
+          return v.map(item => (item && typeof item === 'object') ? { ...item } : {});
+        },
+        addItem() {
+          const f = this.field || {};
+          const arr = this.current();
+          const newItem = {};
+          if (Array.isArray(f.subfields)) {
+            f.subfields.forEach(sf => {
+              if (sf && sf.default !== undefined) newItem[sf.key] = JSON.parse(JSON.stringify(sf.default));
+              else if (sf && sf.type === 'list_string') newItem[sf.key] = [];
+              else if (sf && sf.type === 'list_object') newItem[sf.key] = [];
+              else if (sf && sf.type === 'json') newItem[sf.key] = {};
+              else if (sf && sf.type === 'bool') newItem[sf.key] = false;
+              else if (sf && sf.type === 'int') newItem[sf.key] = 0;
+              else if (sf && sf.type === 'float') newItem[sf.key] = 0;
+              else newItem[sf.key] = '';
+            });
+          }
+          arr.push(newItem);
+          this.$emit('update', arr);
+        },
+        removeItem(idx) {
+          const arr = this.current();
+          arr.splice(idx, 1);
+          this.$emit('update', arr);
+        },
+        updateSubField(itemIdx, subKey, val) {
+          const arr = this.current();
+          if (!arr[itemIdx]) return;
+          arr[itemIdx][subKey] = val;
+          this.$emit('update', arr);
+        },
+        renderSubField(subField, value, itemIdx) {
+          const type = subField.type || 'string';
+          const update = (v) => this.updateSubField(itemIdx, subField.key, v);
+          try {
+            if (type === 'bool') {
+              return h(ElFormItem, { label: subField.label || subField.key }, () =>
+                h(ElSwitch, { modelValue: !!value, 'onUpdate:modelValue': update })
+              );
+            }
+            if (type === 'int') {
+              const p = { modelValue: (value === undefined || value === null) ? 0 : Number(value), 'onUpdate:modelValue': (val) => update((val === undefined || val === null) ? 0 : val), precision: 0, step: 1, controlsPosition: 'right' };
+              if (typeof subField.min === 'number') p.min = subField.min;
+              if (typeof subField.max === 'number') p.max = subField.max;
+              return h(ElFormItem, { label: subField.label || subField.key }, () => h(ElInputNumber, p));
+            }
+            if (type === 'float') {
+              const p = { modelValue: (value === undefined || value === null) ? 0 : Number(value), step: 0.1, 'onUpdate:modelValue': (val) => update((val === undefined || val === null) ? 0 : val), controlsPosition: 'right' };
+              if (typeof subField.min === 'number') p.min = subField.min;
+              if (typeof subField.max === 'number') p.max = subField.max;
+              return h(ElFormItem, { label: subField.label || subField.key }, () => h(ElInputNumber, p));
+            }
+            if (type === 'enum') {
+              const opts = Array.isArray(subField.options) ? subField.options : [];
+              return h(ElFormItem, { label: subField.label || subField.key }, () =>
+                h(ElSelect, { modelValue: value, 'onUpdate:modelValue': update }, () =>
+                  opts.map(o => h(ElOption, { key: String(o), label: String(o), value: o }))
+                )
+              );
+            }
+            if (type === 'list_string') {
+              const arr = Array.isArray(value) ? value.map(x => String(x)) : [];
+              const cacheKey = itemIdx + '_' + subField.key;
+              const tags = arr.map((t, i) => h(ElTag, {
+                key: i, closable: true, style: 'margin-right:4px;margin-bottom:4px;',
+                onClose: () => {
+                  const next = arr.slice(); next.splice(i, 1); update(next);
+                }
+              }, () => t));
+              return h(ElFormItem, { label: subField.label || subField.key }, () =>
+                h('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;' }, [
+                  ...tags,
+                  h(ElInput, {
+                    size: 'small', style: 'width:120px;', placeholder: '添加',
+                    modelValue: this._cacheGet(cacheKey, ''),
+                    'onUpdate:modelValue': (v) => { this._cacheSet(cacheKey, v); },
+                    onKeydown: (e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const val = (this._cacheGet(cacheKey, '') || '').trim();
+                        if (val) { update(arr.concat(val)); this._cacheSet(cacheKey, ''); }
+                      }
+                    }
+                  })
+                ])
+              );
+            }
+            if (type === 'json') {
+              const cacheKey = itemIdx + '_raw_' + subField.key;
+              let initialRaw = '';
+              try { initialRaw = (value === undefined || value === null) ? '' : JSON.stringify(value, null, 2); }
+              catch (e) { initialRaw = ''; }
+              // initialize cache lazily without clobbering in-progress edits
+              if (this._cacheGet(cacheKey, undefined) === undefined) {
+                this._cacheSet(cacheKey, initialRaw);
+              }
+              return h(ElInput, {
+                type: 'textarea', rows: 3,
+                modelValue: this._cacheGet(cacheKey, initialRaw),
+                placeholder: '输入合法 JSON',
+                'onUpdate:modelValue': (v) => {
+                  this._cacheSet(cacheKey, v);
+                  if (!v || !v.trim()) { update({}); return; }
+                  try { update(JSON.parse(v)); }
+                  catch (e) { /* keep editing, don't propagate bad value */ }
+                }
+              });
+            }
+            // default: string
+            const isSecret = !!subField.secret;
+            return h(ElFormItem, { label: subField.label || subField.key }, () =>
+              h(ElInput, {
+                modelValue: (value === undefined || value === null) ? '' : String(value),
+                type: isSecret ? 'password' : 'text',
+                showPassword: isSecret,
+                'onUpdate:modelValue': update
+              })
+            );
+          } catch (e) {
+            return h('div', { style: 'color:#f56c6c;font-size:12px;' }, '子字段渲染失败: ' + (e && e.message || e));
+          }
+        }
+      },
+      render() {
+        const f = this.field || {};
+        const subfields = Array.isArray(f.subfields) ? f.subfields : [];
+        const arr = this.current();
+        if (arr.length === 0) {
+          return h('div', [
+            h('div', { style: 'color:#909399;font-size:13px;margin-bottom:10px;' }, '暂无数据'),
+            h(ElButton, { size: 'small', type: 'primary', plain: true, onClick: () => this.addItem() }, () => '+ 添加一项')
+          ]);
+        }
+        const cards = arr.map((item, idx) =>
+          h('div', { class: 'list-object-item', key: idx }, [
+            h('div', { class: 'item-title' }, '第 ' + (idx + 1) + ' 项'),
+            h(ElButton, {
+              class: 'remove-btn', type: 'danger', size: 'small', text: true,
+              onClick: () => this.removeItem(idx)
+            }, () => '删除'),
+            h(ElForm, { labelWidth: '110px', labelPosition: 'right' },
+              () => subfields.map(sf => this.renderSubField(sf, item ? item[sf.key] : undefined, idx))
+            )
+          ])
+        );
+        return h('div', [
+          ...cards,
+          h(ElButton, { size: 'small', type: 'primary', plain: true, onClick: () => this.addItem() }, () => '+ 添加一项')
+        ]);
+      }
+    });
+
+    // json -> textarea with validation
+    const JsonField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update', 'parse-error'],
+      data() {
+        let raw = '';
+        try {
+          const v = (this.value === undefined || this.value === null) ? this.field.default : this.value;
+          raw = (v === undefined || v === null) ? '' : JSON.stringify(v, null, 2);
+        } catch (e) { raw = ''; }
+        return { raw, error: '' };
+      },
+      watch: {
+        value: {
+          handler(newVal) {
+            // resync only if external change differs from parsed current raw
+            try {
+              const parsed = this.raw && this.raw.trim() ? JSON.parse(this.raw) : null;
+              if (JSON.stringify(parsed) !== JSON.stringify(newVal)) {
+                this.raw = (newVal === undefined || newVal === null) ? '' : JSON.stringify(newVal, null, 2);
+                this.error = '';
+              }
+            } catch (e) { /* keep raw as user is editing */ }
+          },
+          deep: true
+        }
+      },
+      methods: {
+        onInput(v) {
+          this.raw = v;
+          if (!v || !v.trim()) {
+            this.error = '';
+            this.$emit('update', {});
+            this.$emit('parse-error', null);
+            return;
+          }
+          try {
+            const parsed = JSON.parse(v);
+            this.error = '';
+            this.$emit('update', parsed);
+            this.$emit('parse-error', null);
+          } catch (e) {
+            this.error = 'JSON 格式错误: ' + (e.message || e);
+            this.$emit('parse-error', this.error);
+          }
+        }
+      },
+      render() {
+        const textarea = h(ElInput, {
+          type: 'textarea',
+          rows: 5,
+          modelValue: this.raw,
+          placeholder: '输入合法 JSON',
+          'onUpdate:modelValue': this.onInput,
+          class: this.error ? 'json-error' : ''
+        });
+        const err = this.error ? h('div', { class: 'field-error' }, this.error) : null;
+        return h('div', [textarea, err]);
+      }
+    });
+
+    // Fallback component for unknown types
+    const FallbackField = defineComponent({
+      props: ['field', 'value'],
+      emits: ['update'],
+      render() {
+        const f = this.field || {};
+        return h('div', { style: 'color:#e6a23c;font-size:12px;' },
+          '不支持的字段类型: ' + (f.type || '(unknown)'));
+      }
+    });
+
+    // ============================================================
+    // Main App (mounted on #app; uses the in-DOM template)
+    // ============================================================
+    const app = createApp({
+      data() {
+        return {
+          loading: true,
+          saving: false,
+          plugins: [],
+          currentPluginName: '',
+          formValues: {},        // current form values keyed by field.key
+          originalValues: {},    // snapshot from server
+          modifiedKeys: new Set(),
+          fieldErrors: {},       // key -> error message (render failures)
+          jsonErrors: {},        // key -> error msg (json parse errors, blocks save)
+          pwdDialogVisible: false,
+          pwdInput: '',
+          pwdLoading: false,
+          _pwdResolve: null,
+          _pwdReject: null
+        };
+      },
+      computed: {
+        sortedPlugins() {
+          try {
+            return this.plugins.slice().sort((a, b) => {
+              const na = (a && (a.display_name || a.plugin_name)) || '';
+              const nb = (b && (b.display_name || b.plugin_name)) || '';
+              return String(na).localeCompare(String(nb));
+            });
+          } catch (e) {
+            return this.plugins.slice();
+          }
+        },
+        currentPlugin() {
+          if (!this.currentPluginName) return null;
+          return this.plugins.find(p => p && p.plugin_name === this.currentPluginName) || null;
+        },
+        currentPluginFields() {
+          const p = this.currentPlugin;
+          if (!p || !Array.isArray(p.fields)) return [];
+          // wrap each field with try-catch safety: filter out broken entries
+          return p.fields.map(f => {
+            if (!f || typeof f !== 'object' || !f.key) return null;
+            return f;
+          });
+        },
+        modifiedCount() {
+          return this.modifiedKeys.size;
+        }
+      },
+      async created() {
+        await this.loadAll();
+      },
+      methods: {
+        renderFieldComponent(field) {
+          // map type -> component name. We catch errors per-field via wrapper.
+          try {
+            const type = field.type || 'string';
+            switch (type) {
+              case 'bool': return 'BoolField';
+              case 'int': return 'IntField';
+              case 'float': return 'FloatField';
+              case 'string': return 'StringField';
+              case 'enum': return 'EnumField';
+              case 'list_string': return 'ListStringField';
+              case 'list_object': return 'ListObjectField';
+              case 'json': return 'JsonField';
+              default: return 'FallbackField';
+            }
+          } catch (e) {
+            this.markFieldError(field.key, e);
+            return 'FallbackField';
+          }
+        },
+
+        markFieldError(key, e) {
+          this.fieldErrors = { ...this.fieldErrors, [key]: (e && e.message) || String(e) };
+        },
+
+        // Wrap field component to catch render errors per field
+        // (Vue 3 options API doesn't have errorCaptured on dynamically-rendered
+        //  <component>; we use errorCaptured on a thin wrapper via setup below)
+
+        isModified(key) {
+          return this.modifiedKeys.has(key);
+        },
+
+        pluginModifiedCount(name) {
+          const p = this.plugins.find(x => x && x.plugin_name === name);
+          if (!p || !Array.isArray(p.fields)) return 0;
+          let n = 0;
+          for (const f of p.fields) {
+            if (f && f.key && this.modifiedKeys.has(f.key)) n++;
+          }
+          return n;
+        },
+
+        selectPlugin(name) {
+          this.currentPluginName = name;
+        },
+
+        updateFieldValue(key, newVal) {
+          this.formValues[key] = newVal;
+          // detect change vs original
+          if (this._deepEqual(this.originalValues[key], newVal)) {
+            this.modifiedKeys.delete(key);
+          } else {
+            this.modifiedKeys.add(key);
+          }
+          // trigger reactivity for Set
+          this.modifiedKeys = new Set(this.modifiedKeys);
+        },
+
+        onParseError(key, err) {
+          // Track JSON parse errors so saveAll can block until fixed.
+          // Use reassignment so Vue picks up the change.
+          const next = { ...this.jsonErrors };
+          if (err) {
+            next[key] = err;
+          } else {
+            delete next[key];
+          }
+          this.jsonErrors = next;
+        },
+
+        _deepEqual(a, b) {
+          try {
+            return JSON.stringify(a) === JSON.stringify(b);
+          } catch (e) {
+            return a === b;
+          }
+        },
+
+        async ensureAuth(fn) {
+          try {
+            return await fn();
+          } catch (e) {
+            if (e && e._unauthorized) {
+              // prompt for password
+              await this.promptPassword();
+              return await fn();
+            }
+            throw e;
+          }
+        },
+
+        promptPassword() {
+          return new Promise((resolve, reject) => {
+            this.pwdInput = '';
+            this.pwdDialogVisible = true;
+            this._pwdResolve = resolve;
+            this._pwdReject = reject;
+          });
+        },
+
+        async submitPassword() {
+          const pwd = this.pwdInput;
+          if (!pwd) {
+            ElementPlus.ElMessage.warning('请输入口令');
+            return;
+          }
+          this.pwdLoading = true;
+          try {
+            // Try to verify by calling schema with this token.
+            // If backend has a dedicated auth endpoint we'd call it,
+            // but we just set the token and let next call validate.
+            setToken(pwd);
+            // quick verify
+            try {
+              await apiRequest('GET', '/web_config/api/schema');
+              // success -> close & resolve
+              this.pwdDialogVisible = false;
+              this.pwdLoading = false;
+              if (this._pwdResolve) this._pwdResolve();
+            } catch (e) {
+              this.pwdLoading = false;
+              if (e && e._unauthorized) {
+                setToken('');
+                ElementPlus.ElMessage.error('口令无效');
+              } else {
+                // other error -> token is probably fine, close dialog
+                this.pwdDialogVisible = false;
+                if (this._pwdResolve) this._pwdResolve();
+              }
+            }
+          } catch (e) {
+            this.pwdLoading = false;
+            ElementPlus.ElMessage.error('验证失败: ' + (e.message || e));
+          }
+        },
+
+        async loadAll() {
+          this.loading = true;
+          try {
+            await this.ensureAuth(() => this.fetchSchema());
+            await this.ensureAuth(() => this.fetchConfig());
+          } catch (e) {
+            ElementPlus.ElMessage.error('加载失败: ' + (e.message || e));
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async fetchSchema() {
+          if (USE_MOCK) {
+            this.plugins = JSON.parse(JSON.stringify(MOCK_SCHEMA));
+          } else {
+            const data = await apiRequest('GET', '/web_config/api/schema');
+            if (!Array.isArray(data)) {
+              this.plugins = [];
+              return;
+            }
+            this.plugins = data;
+          }
+          // pick first plugin by default
+          if (!this.currentPluginName && this.sortedPlugins.length > 0) {
+            this.currentPluginName = this.sortedPlugins[0].plugin_name;
+          }
+        },
+
+        async fetchConfig() {
+          let cfg;
+          if (USE_MOCK) {
+            cfg = JSON.parse(JSON.stringify(MOCK_CONFIG));
+          } else {
+            cfg = await apiRequest('GET', '/web_config/api/config');
+            if (!cfg || typeof cfg !== 'object') cfg = {};
+          }
+          // prefill defaults from schema for missing keys
+          const merged = {};
+          try {
+            // 建一个 key -> schema 的索引,便于按类型转换
+            const fieldByKey = {};
+            for (const p of this.plugins) {
+              if (!p || !Array.isArray(p.fields)) continue;
+              for (const f of p.fields) {
+                if (f && f.key) fieldByKey[f.key] = f;
+              }
+            }
+            for (const p of this.plugins) {
+              if (!p || !Array.isArray(p.fields)) continue;
+              for (const f of p.fields) {
+                if (!f || !f.key) continue;
+                if (cfg.hasOwnProperty(f.key)) {
+                  merged[f.key] = this._coerceValue(cfg[f.key], f);
+                } else if (f.default !== undefined) {
+                  merged[f.key] = this._clone(f.default);
+                } else {
+                  merged[f.key] = this._defaultForType(f.type);
+                }
+              }
+            }
+          } catch (e) { /* swallow */ }
+
+          this.formValues = merged;
+          this.originalValues = this._clone(merged);
+          this.modifiedKeys = new Set();
+        },
+
+        _clone(v) {
+          if (v === undefined || v === null) return v;
+          try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v; }
+        },
+
+        _defaultForType(type) {
+          switch (type) {
+            case 'bool': return false;
+            case 'int': return 0;
+            case 'float': return 0;
+            case 'string': return '';
+            case 'enum': return '';
+            case 'list_string': return [];
+            case 'list_object': return [];
+            case 'json': return {};
+            default: return '';
+          }
+        },
+
+        // 把 .env 读出的字符串值按 schema 类型转换成正确的 JS 值
+        _coerceValue(raw, field) {
+          if (raw === undefined || raw === null) return this._defaultForType(field.type);
+          // bool: 字符串 "true"/"false" → 真布尔
+          if (field.type === 'bool') {
+            if (typeof raw === 'boolean') return raw;
+            if (typeof raw === 'string') return raw.toLowerCase() === 'true';
+            return !!raw;
+          }
+          // int / float: 数字字符串 → 数字
+          if (field.type === 'int' || field.type === 'float') {
+            if (typeof raw === 'number') return raw;
+            const n = Number(raw);
+            return isNaN(n) ? this._defaultForType(field.type) : n;
+          }
+          // list_string / list_object / json: JSON 字符串 → 对象
+          if (field.type === 'list_string' || field.type === 'list_object' || field.type === 'json') {
+            if (typeof raw === 'string') {
+              try { return JSON.parse(raw); }
+              catch (e) {
+                // 解析失败:fallback
+                return field.type === 'list_string' || field.type === 'list_object' ? [] : {};
+              }
+            }
+            return raw; // 已经是对象/数组
+          }
+          // string / enum: 原样
+          return raw;
+        },
+
+        async saveAll() {
+          // Block save when any JSON field has a parse error
+          const errKeys = Object.keys(this.jsonErrors);
+          if (errKeys.length > 0) {
+            ElementPlus.ElMessage.error('存在格式错误的 JSON 字段:' + errKeys.join(', ') + ',请先修正');
+            return;
+          }
+          if (this.modifiedKeys.size === 0) {
+            ElementPlus.ElMessage.info('没有需要保存的更改');
+            return;
+          }
+          this.saving = true;
+          // build partial payload
+          const payload = {};
+          for (const key of this.modifiedKeys) {
+            payload[key] = this.formValues[key];
+          }
+          try {
+            await this.ensureAuth(() =>
+              apiRequest('PUT', '/web_config/api/config', payload)
+            );
+            // mark all as clean
+            for (const key of Object.keys(payload)) {
+              this.originalValues[key] = this._clone(this.formValues[key]);
+            }
+            this.modifiedKeys = new Set();
+            ElementPlus.ElMessage.success('保存成功,需重启生效');
+          } catch (e) {
+            if (e && e._unauthorized) {
+              // already retried; give up
+              ElementPlus.ElMessage.error('认证失败,请刷新页面重试');
+            } else {
+              const detail = (e && e.data && (e.data.detail || e.data.message)) || (e && e.message) || String(e);
+              ElementPlus.ElMessage.error('保存失败: ' + detail);
+            }
+          } finally {
+            this.saving = false;
+          }
+        }
+      },
+
+      // Global render error catcher so a broken sub-render doesn't nuke whole page
+      errorCaptured(err, vm, info) {
+        // Try to attribute to a field if possible
+        try {
+          if (vm && vm.$props && vm.$props.field && vm.$props.field.key) {
+            this.markFieldError(vm.$props.field.key, err);
+            return false; // don't propagate
+          }
+        } catch (e) { /* ignore */ }
+        // log and suppress; show generic message
+        console.error('[web_config] render error:', err, info);
+        ElementPlus.ElMessage.error('界面渲染异常,请检查浏览器控制台');
+        return false;
+      }
+      // NOTE: no `template` option on purpose — Vue uses the in-DOM
+      // template inside <div id="app">...</div> for rendering.
+    });
+
+    app.use(ElementPlus, { locale: ElementPlusLocaleZhCn });
+
+    // Register field-renderer components globally so <component :is="'BoolField'">
+    // and friends can resolve by string name from the in-DOM template.
+    app.component('BoolField', BoolField);
+    app.component('IntField', IntField);
+    app.component('FloatField', FloatField);
+    app.component('StringField', StringField);
+    app.component('EnumField', EnumField);
+    app.component('ListStringField', ListStringField);
+    app.component('ListObjectField', ListObjectField);
+    app.component('JsonField', JsonField);
+    app.component('FallbackField', FallbackField);
+
+    // Register a tiny inline "loading" icon component to avoid extra CDN dep
+    app.component('loading', {
+      render() {
+        return h('span', { style: 'display:inline-block;' }, '⟳');
+      }
+    });
+
+    app.mount('#app');
+  </script>
+</body>
+</html>
