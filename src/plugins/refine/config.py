@@ -30,6 +30,7 @@ class Config(BaseModel):
     refine_ai_api_key: str = Field(
         default="",
         description="OpenAI 兼容接口的 API Key",
+        json_schema_extra={"secret": True},
     )
     refine_ai_model: str = Field(
         default="",

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Config(BaseModel):
@@ -8,7 +8,7 @@ class Config(BaseModel):
     enable_bilibili: bool = True
     enable_douyin: bool = True
     enable_xiaohongshu: bool = True
-    xiaohongshu_cookie: str = ""
+    xiaohongshu_cookie: str = Field(default="", description="小红书 Cookie", json_schema_extra={"secret": True})
 
     # Bilibili 分群配置
     bilibili_group_mode: Literal["all", "whitelist", "blacklist"] = "all"

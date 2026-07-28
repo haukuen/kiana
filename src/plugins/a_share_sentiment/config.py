@@ -28,6 +28,7 @@ class Config(BaseModel):
     a_share_sentiment_api_key: str = Field(
         default="",
         description="OpenAI 兼容接口的 API Key",
+        json_schema_extra={"secret": True},
     )
     a_share_sentiment_model: str = Field(
         default="",

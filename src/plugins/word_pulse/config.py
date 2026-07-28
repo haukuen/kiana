@@ -7,7 +7,7 @@ from src.plugins.group_permission import GroupPermissionMixin
 class Config(GroupPermissionMixin, BaseModel):
     word_pulse_plugin_enabled: bool = Field(default=False, description="是否启用词频统计插件")
     word_pulse_base_url: str = Field(default="", description="OpenAI 兼容接口的 Base URL")
-    word_pulse_api_key: str = Field(default="", description="OpenAI 兼容接口的 API Key")
+    word_pulse_api_key: str = Field(default="", description="OpenAI 兼容接口的 API Key", json_schema_extra={"secret": True})
     word_pulse_model: str = Field(default="", description="OpenAI 兼容接口的模型名称")
     word_pulse_temperature: float = Field(default=0.0, ge=0, le=2, description="分类温度")
     word_pulse_summary_temperature: float = Field(default=0.3, ge=0, le=2, description="汇总温度")
