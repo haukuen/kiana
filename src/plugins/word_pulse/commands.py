@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class ParsedCommand:
-    action: str  # add / append / list / del / refresh
+    action: str  # add / append / list / del / refresh / alias / unalias
     theme: str | None = None
     seeds: list[str] | None = None
 
@@ -27,16 +27,28 @@ _CMD_LIST = re.compile(rf"^{_PREFIX}\s+list$")
 _CMD_DEL_CLUSTER = re.compile(rf"^{_PREFIX}\s+del\s+(\S+)\s+(\S+)$")
 _CMD_DEL_THEME = re.compile(rf"^{_PREFIX}\s+del\s+(\S+)$")
 _CMD_REFRESH = re.compile(rf"^{_PREFIX}\s+refresh\s+(\S+)$")
+# alias / unalias: 主题 主名词 别名1 [别名2 ...] —— 至少 3 个 token（含命令字）
+_CMD_ALIAS = re.compile(rf"^{_PREFIX}\s+alias\s+(\S+)\s+(\S+)\s+(.+)$")
+_CMD_UNALIAS = re.compile(rf"^{_PREFIX}\s+unalias\s+(\S+)\s+(\S+)\s+(.+)$")
 _QUERY_RE = re.compile(rf"^{_QUERY_P}\s+(\d+)\s*(天|d|周|w|月|m)\s+(\S+)$")
 
 
-def parse_command(text: str) -> ParsedCommand | None:
+def parse_command(text: str) -> ParsedCommand | None:  # noqa: PLR0911
     m = _CMD_DEL_CLUSTER.match(text)
     if m:
         return ParsedCommand(action="del", theme=m.group(1), seeds=[m.group(2)])
     m = _CMD_DEL_THEME.match(text)
     if m:
         return ParsedCommand(action="del", theme=m.group(1))
+    m = _CMD_ALIAS.match(text)
+    if m:
+        # 主名词 + 至少一个别名
+        aliases = [s for s in re.split(r"\s+", m.group(3).strip()) if s]
+        return ParsedCommand(action="alias", theme=m.group(1), seeds=[m.group(2), *aliases])
+    m = _CMD_UNALIAS.match(text)
+    if m:
+        aliases = [s for s in re.split(r"\s+", m.group(3).strip()) if s]
+        return ParsedCommand(action="unalias", theme=m.group(1), seeds=[m.group(2), *aliases])
     m = _CMD_ADD.match(text)
     if m:
         seeds = [s for s in re.split(r"\s+", m.group(2).strip()) if s]

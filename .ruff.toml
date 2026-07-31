@@ -47,6 +47,7 @@ ignore = [
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"scripts/**/*.py" = ["PLC0415", "C901", "PLR0912", "PLR0915", "S110"]
 
 # McCabe 复杂度配置
 [lint.mccabe]

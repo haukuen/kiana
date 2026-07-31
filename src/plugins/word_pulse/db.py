@@ -49,6 +49,19 @@ SCHEMA_STATEMENTS = [
 
 def ensure_schema() -> None:
     db.ensure_schema(SCHEMA_STATEMENTS)
+    _ensure_aliases_column()
+
+
+def _ensure_aliases_column() -> None:
+    """为旧库补齐 word_pulse_cluster.aliases_json 列。
+
+    SQLite 不支持 ADD COLUMN IF NOT EXISTS，用 PRAGMA 检测后补列。
+    """
+    cols = {row[1] for row in db._conn.execute("PRAGMA table_info(word_pulse_cluster)").fetchall()}
+    if "aliases_json" not in cols:
+        db._conn.execute(
+            "ALTER TABLE word_pulse_cluster ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"
+        )
 
 
 # ── Theme ──
@@ -149,14 +162,121 @@ async def add_clusters(theme_id: int, names: list[str]) -> list[int]:
 
 async def get_clusters(theme_id: int) -> list[dict]:
     rows = await db.fetch_all(
-        "SELECT id, theme_id, name, created_at FROM word_pulse_cluster WHERE theme_id = ? ORDER BY id",
+        "SELECT id, theme_id, name, created_at, aliases_json FROM word_pulse_cluster WHERE theme_id = ? ORDER BY id",
         (theme_id,),
     )
-    return [dict(r) for r in rows]
+    result: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["aliases"] = json.loads(d.pop("aliases_json", "[]"))
+        except (json.JSONDecodeError, KeyError):
+            d["aliases"] = []
+        result.append(d)
+    return result
 
 
 async def delete_cluster(cluster_id: int) -> None:
     await db.execute("DELETE FROM word_pulse_cluster WHERE id = ?", (cluster_id,))
+
+
+# ── Cluster aliases ──
+
+
+async def add_cluster_aliases(
+    cluster_id: int, aliases: list[str], *, theme_id: int | None = None,
+) -> list[str]:
+    """给 cluster 追加别名。
+
+    幂等：已存在的别名不会重复添加。
+    安全：与同主题内任意 cluster 名字冲突的别名会被拒绝（防止别名变独立 cluster）。
+
+    Args:
+        cluster_id: 目标 cluster 的 id。
+        aliases: 待添加的别名列表。
+        theme_id: 用于冲突检测的主题 id；若为 None 则自动从 cluster 行读取。
+
+    Returns:
+        实际新增（去重、过滤冲突后）的别名列表。
+    """
+    if not aliases:
+        return []
+    if theme_id is None:
+        row = await db.fetch_one(
+            "SELECT theme_id FROM word_pulse_cluster WHERE id = ?", (cluster_id,),
+        )
+        if row is None:
+            return []
+        theme_id = row["theme_id"]
+
+    # 同主题内所有 cluster 名字（包括自己）作为黑名单
+    existing_clusters = await db.fetch_all(
+        "SELECT name FROM word_pulse_cluster WHERE theme_id = ?", (theme_id,),
+    )
+    reserved_names = {r["name"] for r in existing_clusters}
+
+    # 当前别名
+    row = await db.fetch_one(
+        "SELECT aliases_json FROM word_pulse_cluster WHERE id = ?", (cluster_id,),
+    )
+    if row is None:
+        return []
+    try:
+        current = json.loads(row["aliases_json"])
+    except json.JSONDecodeError:
+        current = []
+    current_set = set(current)
+
+    added: list[str] = []
+    for a in aliases:
+        if not a or a in reserved_names or a in current_set:
+            continue
+        current_set.add(a)
+        added.append(a)
+
+    if not added:
+        return []
+    # 保序：旧别名 + 新增别名
+    merged = current + added
+    await db.execute(
+        "UPDATE word_pulse_cluster SET aliases_json = ? WHERE id = ?",
+        (json.dumps(merged, ensure_ascii=False), cluster_id),
+    )
+    return added
+
+
+async def remove_cluster_aliases(cluster_id: int, aliases: list[str]) -> list[str]:
+    """从 cluster 删除别名。
+
+    Args:
+        cluster_id: 目标 cluster 的 id。
+        aliases: 待删除的别名列表。
+
+    Returns:
+        实际被删除的别名列表。
+    """
+    if not aliases:
+        return []
+    row = await db.fetch_one(
+        "SELECT aliases_json FROM word_pulse_cluster WHERE id = ?", (cluster_id,),
+    )
+    if row is None:
+        return []
+    try:
+        current = json.loads(row["aliases_json"])
+    except json.JSONDecodeError:
+        current = []
+    current_set = set(current)
+    to_remove = {a for a in aliases if a in current_set}
+    if not to_remove:
+        return []
+    # 保序：保留未删除的，按原顺序
+    kept = [a for a in current if a not in to_remove]
+    await db.execute(
+        "UPDATE word_pulse_cluster SET aliases_json = ? WHERE id = ?",
+        (json.dumps(kept, ensure_ascii=False), cluster_id),
+    )
+    return sorted(to_remove)
 
 
 # ── Charset ──
