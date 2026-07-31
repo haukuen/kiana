@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 import nonebot
-from nonebot import get_driver, get_plugin_config
+from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
 
 from .config import Config
@@ -49,8 +49,9 @@ def _resolve_env_file() -> Path:
 ENV_FILE: Path = _resolve_env_file()
 
 # ── 注册 FastAPI 路由 + 静态文件 ──────────────────────────────
-# 模块级 `nonebot.get_app()` 仅在 NoneBot 已初始化时生效;否则跳过,
-# 不影响 `from .scanner import ...` 等纯工具导入。
+# 模块级 `nonebot.get_app()` 仅在 NoneBot 已初始化时调用;未初始化时
+# (如 `from .scanner import ...` 等纯工具导入)静默跳过,不影响包导入。
+# 已初始化但挂载失败时会 warning,见下方调用块。
 
 
 def _mount_web_endpoints() -> None:
@@ -80,8 +81,25 @@ def _mount_web_endpoints() -> None:
         )
 
 
-try:
-    _mount_web_endpoints()
-except Exception:
-    # NoneBot 未初始化(直接导入子模块场景,如扫描测试),静默跳过挂载
-    logger.debug("web_config 跳过 FastAPI 挂载(NoneBot 可能未初始化)", exc_info=True)
+def _is_nonebot_initialized() -> bool:
+    """判断 NoneBot 是否已完成初始化(get_driver 是否可用)。"""
+    try:
+        nonebot.get_driver()
+    except Exception:
+        return False
+    return True
+
+
+if _is_nonebot_initialized():
+    # NoneBot 已初始化:挂载失败属于真实问题(driver 非 ~fastapi、路由注册报错等),
+    # 必须 warning 级别暴露出来,否则用户访问 /web_config 只会得到 404 无法排查。
+    try:
+        _mount_web_endpoints()
+    except Exception:
+        logger.warning(
+            "web_config 挂载失败,/web_config 路由将不可用",
+            exc_info=True,
+        )
+else:
+    # NoneBot 未初始化(纯工具导入 `from .scanner import ...`、collect 阶段测试等),静默跳过
+    logger.debug("web_config 跳过 FastAPI 挂载(NoneBot 未初始化)")

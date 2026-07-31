@@ -466,10 +466,209 @@
         animation: none !important;
       }
     }
+
+    /* ================= 登录门 ================= */
+    /* 全屏遮罩:验证通过前主 GUI 完全不可见,避免闪烁 */
+    .auth-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: linear-gradient(150deg, #f0fdfa 0%, #f5fafb 45%, #f8fafc 100%);
+    }
+    .auth-gate::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(640px 320px at 88% -6%, rgba(20, 184, 166, 0.12), transparent 62%),
+        radial-gradient(560px 300px at -8% 108%, rgba(6, 182, 212, 0.10), transparent 60%);
+    }
+    .auth-card {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 400px;
+      background: #fff;
+      border-radius: 20px;
+      padding: 40px 36px 32px;
+      border: 1px solid #eaf1f1;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.04);
+      animation: authCardIn 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    @keyframes authCardIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.985); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
+    }
+    .auth-logo {
+      width: 60px;
+      height: 60px;
+      border-radius: 18px;
+      background: var(--brand-grad);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      color: #fff;
+      margin: 0 auto 18px;
+      box-shadow: 0 10px 24px rgba(20, 184, 166, 0.35);
+    }
+    .auth-title {
+      text-align: center;
+      margin: 0 0 6px;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1e293b;
+      letter-spacing: 0.3px;
+    }
+    .auth-title .brand-text {
+      background: linear-gradient(120deg, #0d9488 10%, #06b6d4 90%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+    .auth-subtitle {
+      text-align: center;
+      font-size: 13px;
+      color: #94a3b8;
+      margin: 0 0 26px;
+      line-height: 1.6;
+    }
+    .auth-form { display: flex; flex-direction: column; gap: 14px; }
+    .auth-input {
+      width: 100%;
+      height: 46px;
+      padding: 0 16px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #1e293b;
+      background: #f8fafc;
+      border: 1px solid #e3ebeb;
+      border-radius: 12px;
+      outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      box-sizing: border-box;
+    }
+    .auth-input::placeholder { color: #9fb0c0; }
+    .auth-input:focus {
+      border-color: var(--el-color-primary);
+      background: #fff;
+      box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14);
+    }
+    .auth-input.error {
+      border-color: #ef4444;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.10);
+    }
+    .auth-btn {
+      height: 46px;
+      border: none;
+      border-radius: 12px;
+      background: var(--brand-grad);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      box-shadow: 0 6px 16px rgba(20, 184, 166, 0.35);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .auth-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+      box-shadow: 0 9px 22px rgba(20, 184, 166, 0.42);
+    }
+    .auth-btn:active:not(:disabled) { transform: translateY(0); filter: brightness(0.97); }
+    .auth-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .auth-btn .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.5);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .auth-error {
+      font-size: 12.5px;
+      color: #ef4444;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 8px 12px;
+      line-height: 1.5;
+      display: none;
+    }
+    .auth-error.show { display: block; }
+    .auth-checking {
+      position: absolute;
+      inset: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      background: linear-gradient(150deg, #f0fdfa 0%, #f5fafb 45%, #f8fafc 100%);
+      color: #0d9488;
+      font-size: 14px;
+      letter-spacing: 1px;
+    }
+    .auth-checking .spinner-lg {
+      width: 30px; height: 30px;
+      border: 3px solid rgba(20, 184, 166, 0.2);
+      border-top-color: #14b8a6;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .auth-hint {
+      text-align: center;
+      font-size: 11.5px;
+      color: #94a3b8;
+      margin: 18px 0 0;
+      line-height: 1.6;
+    }
   </style>
 </head>
 <body>
-  <div id="app">
+  <!-- 登录门:验证通过前覆盖主 GUI,避免内容闪烁 -->
+  <div id="auth-checking" class="auth-checking">
+    <div class="spinner-lg"></div>
+    <span>正在验证访问权限…</span>
+  </div>
+
+  <div id="auth-gate" class="auth-gate" style="display:none;">
+    <div class="auth-card">
+      <div class="auth-logo">⚙</div>
+      <h1 class="auth-title"><span class="brand-text">Kiana 配置面板</span></h1>
+      <p class="auth-subtitle">远程访问需要输入访问口令</p>
+      <form class="auth-form" id="auth-form" autocomplete="on">
+        <input
+          type="password"
+          id="auth-token"
+          class="auth-input"
+          placeholder="请输入访问口令"
+          autocomplete="current-password"
+          autofocus
+        />
+        <div id="auth-error" class="auth-error"></div>
+        <button type="submit" id="auth-submit" class="auth-btn">
+          <span class="spinner" id="auth-spinner" style="display:none;"></span>
+          <span id="auth-btn-text">登录</span>
+        </button>
+      </form>
+      <p class="auth-hint">口令即服务端配置的 <code>web_config_token</code></p>
+    </div>
+  </div>
+
+  <div id="app" style="visibility:hidden;">
     <div class="app-header">
       <div class="title-area">
         <div class="title-texts">
@@ -477,9 +676,14 @@
           <span class="subtitle">保存后需要手动重启容器生效</span>
         </div>
       </div>
-      <el-button type="primary" :loading="saving" :disabled="modifiedCount === 0" @click="saveAll">
-        保存全部
-      </el-button>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <el-button type="primary" :loading="saving" :disabled="modifiedCount === 0" @click="saveAll">
+          保存全部
+        </el-button>
+        <el-button text bg @click="logout">
+          <span style="font-size:14px;">退出登录</span>
+        </el-button>
+      </div>
     </div>
 
     <div class="app-body">
@@ -551,19 +755,6 @@
         </template>
       </div>
     </div>
-
-    <!-- Password dialog -->
-    <el-dialog v-model="pwdDialogVisible" title="需要口令" width="380px" :close-on-click-modal="false" :show-close="!pwdLoading">
-      <el-form @submit.native.prevent="submitPassword">
-        <el-form-item label="访问口令">
-          <el-input v-model="pwdInput" type="password" show-password placeholder="请输入口令" autocomplete="off" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="pwdDialogVisible = false" :disabled="pwdLoading">取消</el-button>
-        <el-button type="primary" :loading="pwdLoading" @click="submitPassword">确定</el-button>
-      </template>
-    </el-dialog>
   </div>
 
   <script>
@@ -620,7 +811,8 @@
     // ============================================================
     // HTTP helper with auth + 401 handling
     // ============================================================
-    const TOKEN_KEY = 'kiana_web_config_token';
+    // 注意:此 key 是与后端约定好的契约,登录页据此读写 token。
+    const TOKEN_KEY = 'web_config_token';
 
     function getToken() {
       try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
@@ -661,6 +853,144 @@
       }
       return data;
     }
+
+    // ============================================================
+    // 登录门 (auth gate)
+    // ------------------------------------------------------------
+    // 流程:
+    //   1. 页面打开 → 先显示 #auth-checking(校验中)
+    //   2. 用当前 token(可能为空)调一次 /web_config/api/schema
+    //      - 成功(含 localhost 免 token 场景)→ 隐藏 gate,挂载主 GUI
+    //      - 401/403 → 若 localStorage 有 token 则清掉,显示登录页
+    //   3. 登录页提交 → 暂存 token → 再验证一次 → 成功进 GUI / 失败提示
+    // 主 GUI(#app)在验证通过前 visibility:hidden,杜绝闪烁。
+    // ============================================================
+    const AuthGate = {
+      checkingEl: document.getElementById('auth-checking'),
+      gateEl: document.getElementById('auth-gate'),
+      formEl: document.getElementById('auth-form'),
+      inputEl: document.getElementById('auth-token'),
+      errorEl: document.getElementById('auth-error'),
+      submitEl: document.getElementById('auth-submit'),
+      spinnerEl: document.getElementById('auth-spinner'),
+      btnTextEl: document.getElementById('auth-btn-text'),
+      onPass: null,        // 验证通过回调(由主 GUI 注册)
+      _busy: false,
+
+      _setLoading(loading) {
+        this._busy = loading;
+        this.submitEl.disabled = loading;
+        this.spinnerEl.style.display = loading ? 'inline-flex' : 'none';
+        this.btnTextEl.textContent = loading ? '验证中…' : '登录';
+      },
+      _showError(msg) {
+        if (msg) {
+          this.errorEl.textContent = msg;
+          this.errorEl.classList.add('show');
+          this.inputEl.classList.add('error');
+        } else {
+          this.errorEl.classList.remove('show');
+          this.inputEl.classList.remove('error');
+        }
+      },
+      _showChecking() {
+        this.checkingEl.style.display = 'flex';
+        this.gateEl.style.display = 'none';
+      },
+      _showLogin(clearInput) {
+        this.checkingEl.style.display = 'none';
+        this.gateEl.style.display = 'flex';
+        this._setLoading(false);
+        if (clearInput) this.inputEl.value = '';
+        // 延迟聚焦,避免过渡动画期间焦点丢失
+        setTimeout(() => { if (this.gateEl.style.display !== 'none') this.inputEl.focus(); }, 50);
+      },
+      _pass() {
+        this.checkingEl.style.display = 'none';
+        this.gateEl.style.display = 'none';
+        if (typeof this.onPass === 'function') this.onPass();
+      },
+
+      // 校验当前 token 是否有效。成功 resolve(true),鉴权失败 resolve(false),
+      // 其他网络错误 reject(让调用方决定怎么提示)。
+      async verify() {
+        try {
+          await apiRequest('GET', '/web_config/api/schema');
+          return true;
+        } catch (e) {
+          if (e && e._unauthorized) return false;
+          throw e;
+        }
+      },
+
+      // 启动时入口
+      async boot() {
+        this._showChecking();
+        try {
+          const ok = await this.verify();
+          if (ok) { this._pass(); return; }
+          // 校验失败:localStorage 里的 token 是坏的,清掉
+          if (getToken()) setToken('');
+          this._showLogin(false);
+        } catch (e) {
+          // 网络异常等:留在校验态,显示可重试提示
+          this.checkingEl.querySelector('span').textContent =
+            '无法连接服务(' + ((e && e.message) || e) + '),将显示登录页重试';
+          setTimeout(() => this._showLogin(false), 600);
+        }
+      },
+
+      // 用户在登录页提交 token
+      async submit(token) {
+        if (this._busy) return;
+        token = (token || '').trim();
+        if (!token) {
+          this._showError('请输入访问口令');
+          this.inputEl.focus();
+          return;
+        }
+        this._showError('');
+        this._setLoading(true);
+        // 临时写入,verify 会带上 Bearer header
+        setToken(token);
+        try {
+          const ok = await this.verify();
+          if (ok) {
+            this._pass();
+            return;
+          }
+          // 无效:清掉 token,留在登录页提示
+          setToken('');
+          this._setLoading(false);
+          this._showError('口令无效,请重新输入');
+          this.inputEl.select();
+        } catch (e) {
+          setToken('');
+          this._setLoading(false);
+          const msg = (e && e.message) ? ('验证失败:' + e.message) : '网络异常,请稍后重试';
+          this._showError(msg);
+        }
+      },
+
+      // 主动退出登录:清 token,回到登录页
+      logout() {
+        setToken('');
+        // 主 GUI 还在,但隐藏它防止旧数据泄露/闪烁
+        const appEl = document.getElementById('app');
+        if (appEl) appEl.style.visibility = 'hidden';
+        this._showLogin(true);
+      }
+    };
+
+    // 绑定表单事件(立即执行,不依赖 Vue)
+    AuthGate.formEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      AuthGate.submit(AuthGate.inputEl.value);
+    });
+    AuthGate.inputEl.addEventListener('input', () => {
+      // 输入时清除错误样式
+      if (AuthGate.errorEl.classList.contains('show')) AuthGate._showError('');
+    });
 
     // ============================================================
     // Field renderer sub-components (one per type)
@@ -1086,12 +1416,7 @@
           originalValues: {},    // snapshot from server
           modifiedKeys: new Set(),
           fieldErrors: {},       // key -> error message (render failures)
-          jsonErrors: {},        // key -> error msg (json parse errors, blocks save)
-          pwdDialogVisible: false,
-          pwdInput: '',
-          pwdLoading: false,
-          _pwdResolve: null,
-          _pwdReject: null
+          jsonErrors: {}         // key -> error msg (json parse errors, blocks save)
         };
       },
       computed: {
@@ -1124,9 +1449,14 @@
         }
       },
       async created() {
-        await this.loadAll();
+        // 不在这里直接 loadAll —— 等登录门校验通过后再触发(见文件末尾 AuthGate 绑定)。
+        // 这样主 GUI 在拿到有效凭证前不会发起请求,也不会闪现。
       },
       methods: {
+        // 退出登录:委托给 AuthGate(它会清 token + 隐藏主 GUI + 显示登录页)
+        logout() {
+          AuthGate.logout();
+        },
         renderFieldComponent(field) {
           // map type -> component name. We catch errors per-field via wrapper.
           try {
@@ -1211,56 +1541,12 @@
             return await fn();
           } catch (e) {
             if (e && e._unauthorized) {
-              // prompt for password
-              await this.promptPassword();
-              return await fn();
+              // 会话中 token 失效(例如服务端重置了 token):清掉并回到登录门
+              ElementPlus.ElMessage.warning('访问口令已失效,请重新登录');
+              AuthGate.logout();
+              throw e;
             }
             throw e;
-          }
-        },
-
-        promptPassword() {
-          return new Promise((resolve, reject) => {
-            this.pwdInput = '';
-            this.pwdDialogVisible = true;
-            this._pwdResolve = resolve;
-            this._pwdReject = reject;
-          });
-        },
-
-        async submitPassword() {
-          const pwd = this.pwdInput;
-          if (!pwd) {
-            ElementPlus.ElMessage.warning('请输入口令');
-            return;
-          }
-          this.pwdLoading = true;
-          try {
-            // Try to verify by calling schema with this token.
-            // If backend has a dedicated auth endpoint we'd call it,
-            // but we just set the token and let next call validate.
-            setToken(pwd);
-            // quick verify
-            try {
-              await apiRequest('GET', '/web_config/api/schema');
-              // success -> close & resolve
-              this.pwdDialogVisible = false;
-              this.pwdLoading = false;
-              if (this._pwdResolve) this._pwdResolve();
-            } catch (e) {
-              this.pwdLoading = false;
-              if (e && e._unauthorized) {
-                setToken('');
-                ElementPlus.ElMessage.error('口令无效');
-              } else {
-                // other error -> token is probably fine, close dialog
-                this.pwdDialogVisible = false;
-                if (this._pwdResolve) this._pwdResolve();
-              }
-            }
-          } catch (e) {
-            this.pwdLoading = false;
-            ElementPlus.ElMessage.error('验证失败: ' + (e.message || e));
           }
         },
 
@@ -1270,7 +1556,10 @@
             await this.ensureAuth(() => this.fetchSchema());
             await this.ensureAuth(() => this.fetchConfig());
           } catch (e) {
-            ElementPlus.ElMessage.error('加载失败: ' + (e.message || e));
+            // 已被 ensureAuth 拦截的鉴权错误不再重复提示
+            if (!(e && e._unauthorized)) {
+              ElementPlus.ElMessage.error('加载失败: ' + (e.message || e));
+            }
           } finally {
             this.loading = false;
           }
@@ -1461,7 +1750,26 @@
       }
     });
 
-    app.mount('#app');
+    // ============================================================
+    // 启动流程:先挂载 Vue(此时 #app 仍 visibility:hidden),
+    // 再把登录门的"通过"回调接到 loadAll + 显示主 GUI,然后开始校验。
+    // 这样验证通过前主 GUI 完全不可见,杜绝闪烁。
+    // ============================================================
+    const appInstance = app.mount('#app');
+
+    AuthGate.onPass = async () => {
+      try {
+        // 校验通过:显示主 GUI,再加载配置数据
+        const appEl = document.getElementById('app');
+        if (appEl) appEl.style.visibility = 'visible';
+        await appInstance.loadAll();
+      } catch (e) {
+        console.error('[web_config] 启动加载失败:', e);
+      }
+    };
+
+    // 启动登录校验
+    AuthGate.boot();
   </script>
 </body>
 </html>
