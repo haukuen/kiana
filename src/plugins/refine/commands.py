@@ -69,13 +69,28 @@ refine_group_rule = create_group_rule(
     prefix="refine_",
 )
 
-refine_subscribe = on_command("炼化订阅", rule=refine_group_rule, block=True)
-refine_list = on_command("炼化订阅列表", rule=refine_group_rule, block=True)
-refine_unsubscribe = on_command("炼化取消订阅", rule=refine_group_rule, block=True)
+# force_whitespace=True: 命令字后必须有空格（或无参数）才触发，防止
+# `.env.prod` 的 COMMAND_START=["/", ""]（含空串）让 `炼化这个功能怎么用`
+# 这样的粘连文本被误识别为 `炼化` 命令。bug#1 修复。
+refine_subscribe = on_command(
+    "炼化订阅", rule=refine_group_rule, force_whitespace=True, block=True
+)
+refine_list = on_command(
+    "炼化订阅列表", rule=refine_group_rule, force_whitespace=True, block=True
+)
+refine_unsubscribe = on_command(
+    "炼化取消订阅", rule=refine_group_rule, force_whitespace=True, block=True
+)
 # 强制炼化先注册
-refine_force = on_command("强制炼化", rule=refine_group_rule, block=True)
-refine_lazy = on_command("炼化", rule=refine_group_rule, block=True)
-refine_help = on_command("炼化帮助", rule=refine_group_rule, block=True)
+refine_force = on_command(
+    "强制炼化", rule=refine_group_rule, force_whitespace=True, block=True
+)
+refine_lazy = on_command(
+    "炼化", rule=refine_group_rule, force_whitespace=True, block=True
+)
+refine_help = on_command(
+    "炼化帮助", rule=refine_group_rule, force_whitespace=True, block=True
+)
 
 
 # ── 工具函数 ──────────────────────────────────────────

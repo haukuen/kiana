@@ -93,33 +93,33 @@ def _extract_content(payload: dict) -> str:
 
 async def _request_llm(
     *, base_url: str, api_key: str, model: str,
-    messages: list[dict], response_schema: dict,
-    temperature: float, timeout_seconds: float,
+    messages: list[dict], temperature: float, timeout_seconds: float,
 ) -> dict:
     """发送 OpenAI 兼容请求并返回解析后的 JSON dict。
 
-    优先尝试 ``response_format: json_schema strict``（OpenAI 官方支持）。
-    若上游 API 返回 400（表明不支持 strict schema），自动降级为
-    ``response_format: json_object`` 重试，由 pydantic 校验兜底 schema。
+    直接使用 ``response_format: {type: "json_object"}``，由 pydantic 在调用方
+    做二次 schema 校验。原 strict json_schema + json_object 两级降级已删除，因为
+    部分上游 OpenAI 兼容网关对 strict json_schema 支持不完整（首次即 400），降级
+    到 json_object 后某些网关/模型同样不支持 —— bug#3。
     """
     url = _build_url(base_url)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    base_body: dict = {"model": model, "temperature": temperature, "messages": messages}
-
-    # 优先 strict json_schema
-    strict_body = dict(base_body)
-    strict_body["response_format"] = {
-        "type": "json_schema",
-        "json_schema": {"name": "response", "schema": response_schema, "strict": True},
+    body: dict = {
+        "model": model,
+        "temperature": temperature,
+        "messages": messages,
+        "response_format": {"type": "json_object"},
     }
     try:
-        resp = await _post_with_fallback(
-            url=url, headers=headers, strict_body=strict_body,
-            fallback_body={**base_body, "response_format": {"type": "json_object"}},
-            timeout_seconds=timeout_seconds, model=model,
-        )
-    except _LLMRequestError:
-        raise
+        async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+    except httpx.TimeoutException as e:
+        raise WordPulseAITimeoutError("AI 请求超时") from e
+    except httpx.HTTPStatusError as e:
+        raise _to_ai_error(e) from e
+    except httpx.RequestError as e:
+        raise WordPulseAIServiceError(f"AI 请求失败: {type(e).__name__}: {e}") from e
 
     try:
         payload = resp.json()
@@ -133,45 +133,6 @@ async def _request_llm(
         return json.loads(content)
     except json.JSONDecodeError as e:
         raise WordPulseAIResponseError("模型输出不是合法 JSON") from e
-
-
-class _LLMRequestError(Exception):
-    """内部信号：已转换为 WordPulseAI* 异常，直接 raise。"""
-
-
-async def _post_with_fallback(
-    *, url: str, headers: dict, strict_body: dict, fallback_body: dict,
-    timeout_seconds: float, model: str,
-) -> httpx.Response:
-    """先发 strict 请求；400 时降级 fallback；其他错误按异常分层抛出。"""
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
-            resp = await client.post(url, headers=headers, json=strict_body)
-            resp.raise_for_status()
-            return resp
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code != 400:
-            raise _to_ai_error(e) from e
-        # 400 通常意味着上游不支持 strict json_schema，降级为 json_object
-        logger.warning(
-            f"[词频统计] json_schema strict 返回 400，降级为 json_object（model={model}）"
-        )
-        try:
-            async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
-                resp = await client.post(url, headers=headers, json=fallback_body)
-                resp.raise_for_status()
-                return resp
-        except httpx.HTTPStatusError as e2:
-            raise _to_ai_error(e2) from e2
-        except httpx.TimeoutException as e2:
-            raise WordPulseAITimeoutError("AI 请求超时") from e2
-        except httpx.RequestError as e2:
-            raise WordPulseAIServiceError("AI 请求失败") from e2
-    except httpx.TimeoutException as e:
-        raise WordPulseAITimeoutError("AI 请求超时") from e
-    except httpx.RequestError as e:
-        raise WordPulseAIServiceError("AI 请求失败") from e
-    raise _LLMRequestError("unreachable")
 
 
 def _to_ai_error(e: httpx.HTTPStatusError) -> WordPulseAIError:
@@ -192,18 +153,6 @@ _CHARSET_SYSTEM = (
     '{"charsets": [{"cluster": "种子词", "chars": ["字1", "字2", ...]}]}\n'
     "每个 cluster 的 chars 数组必须含 5-30 个字符。"
 )
-_CHARSET_SCHEMA = {
-    "type": "object", "required": ["charsets"], "properties": {
-        "charsets": {
-            "type": "array", "items": {
-                "type": "object", "required": ["cluster", "chars"], "properties": {
-                    "cluster": {"type": "string"},
-                    "chars": {"type": "array", "items": {"type": "string"}, "minItems": 5, "maxItems": 30},
-                },
-            },
-        },
-    },
-}
 
 
 async def expand_charsets(
@@ -215,7 +164,7 @@ async def expand_charsets(
         base_url=base_url, api_key=api_key, model=model,
         messages=[{"role": "system", "content": _CHARSET_SYSTEM},
                   {"role": "user", "content": f"主题：{theme}\n子类种子词：\n{cluster_lines}\n\n请为每个子类列出 5-30 个语义相关的中文字符。"}],
-        response_schema=_CHARSET_SCHEMA, temperature=temperature, timeout_seconds=timeout,
+        temperature=temperature, timeout_seconds=timeout,
     )
     try:
         validated = CharsetExpansionResponse.model_validate(parsed)
@@ -227,17 +176,6 @@ async def expand_charsets(
 # ── Call 2: Grey-area batch classification ──
 
 
-_BATCH_CLASSIFY_SCHEMA = {
-    "type": "object", "required": ["results"], "properties": {
-        "results": {
-            "type": "array", "items": {
-                "type": "object", "required": ["id", "cluster"], "properties": {
-                    "id": {"type": "integer"}, "cluster": {"type": ["string", "null"]},
-                },
-            },
-        },
-    },
-}
 _BATCH_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类簇定义，"
     "把每条消息归到一个最匹配的子类或 null（表示不属于该主题）。\n"
@@ -268,7 +206,7 @@ async def classify_batch(
             base_url=base_url, api_key=api_key, model=model,
             messages=[{"role": "system", "content": _BATCH_SYSTEM},
                       {"role": "user", "content": f"主题：{theme_name}\n子类：\n{cluster_lines}\n\n消息：\n{msg_lines}"}],
-            response_schema=_BATCH_CLASSIFY_SCHEMA, temperature=temperature, timeout_seconds=timeout,
+            temperature=temperature, timeout_seconds=timeout,
         )
         try:
             validated = BatchClassificationResponse.model_validate(parsed)
@@ -281,14 +219,6 @@ async def classify_batch(
 # ── Call 3: Final summary ──
 
 
-_SUMMARY_SCHEMA = {
-    "type": "object", "required": ["ranking", "trend", "examples", "unclassified_high_freq"], "properties": {
-        "ranking": {"type": "array", "items": {"type": "object", "required": ["cluster", "count", "percent"], "properties": {"cluster": {"type": "string"}, "count": {"type": "integer"}, "percent": {"type": "number"}}}},
-        "trend": {"type": "string"},
-        "examples": {"type": "array", "items": {"type": "object", "required": ["cluster", "text", "author", "day"], "properties": {"cluster": {"type": "string"}, "text": {"type": "string"}, "author": {"type": "string"}, "day": {"type": "string"}}}, "maxItems": 5},
-        "unclassified_high_freq": {"type": "array", "items": {"type": "object", "required": ["term", "count"], "properties": {"term": {"type": "string"}, "count": {"type": "integer"}}}, "maxItems": 8},
-    },
-}
 _SUMMARY_SYSTEM = (
     "你是中文群聊话题热度分析助手。根据提供的日桶统计数据，"
     "给出主题讨论的趋势总结和典型原文。趋势总结 ≤ 80 字。\n"
@@ -308,7 +238,7 @@ async def summarize(
     parsed = await _request_llm(
         base_url=base_url, api_key=api_key, model=model,
         messages=[{"role": "system", "content": _SUMMARY_SYSTEM}, {"role": "user", "content": prompt}],
-        response_schema=_SUMMARY_SCHEMA, temperature=temperature, timeout_seconds=timeout,
+        temperature=temperature, timeout_seconds=timeout,
     )
     try:
         return SummaryResult.model_validate(parsed)

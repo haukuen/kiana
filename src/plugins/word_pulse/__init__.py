@@ -95,6 +95,9 @@ admin_matcher = on_regex(
     rule=word_pulse_rule, priority=5, block=True,
 )
 query_matcher = on_regex(r"^总结\s+\d+\s*(天|d|周|w|月|m)\s+\S+", rule=word_pulse_rule, priority=5, block=True)
+# 帮助命令所有人可用，独立 matcher，不走 handle_admin 的管理员校验。
+# 正则锚定整条消息，避免「词频帮助我」之类的粘连文本误触发。
+help_matcher = on_regex(r"^词频\s+(help|帮助)\s*$", rule=word_pulse_rule, priority=5, block=True)
 
 # ── Cooldown & Cache ──
 
@@ -206,6 +209,34 @@ async def handle_admin(event: MessageEvent) -> None:
     except Exception as e:
         logger.error(f"[词频] {cmd.action} 失败: {e}", exc_info=True)
         await admin_matcher.finish(f"操作失败：{e}")
+
+
+# ── Help handler ──
+
+
+@help_matcher.handle()
+async def handle_help() -> None:
+    lines = [
+        "📊 词频插件帮助",
+        "",
+        "群聊主题词频统计 — 创建主题 → AI 日桶分类 → 热度总结。",
+        "",
+        "管理命令(需群管理员/Bot 管理员):",
+        "  词频 add <主题> <种子词1> <种子词2> ...   创建主题",
+        "  词频 append <主题> <种子词...>            追加子类",
+        "  词频 list                                 列出本群主题",
+        "  词频 del <主题>                           删除主题",
+        "  词频 del <主题> <子类>                    删除子类",
+        "  词频 refresh <主题>                       刷新字符集(AI 扩展)",
+        "  词频 alias <主题> <主名词> <别名...>      给子类加别名",
+        "  词频 unalias <主题> <主名词> <别名...>    删除子类别名",
+        "",
+        "查询命令(所有人可用):",
+        "  总结 <N>天/周/月 <主题>                  查询热度统计(例: 总结 7天 炒股)",
+        "",
+        "时间单位: 天/d, 周/w, 月/m",
+    ]
+    await help_matcher.finish("\n".join(lines))
 
 
 async def _handle_add(event: GroupMessageEvent, cmd) -> None:
@@ -393,9 +424,14 @@ async def _run_summary(*, query, theme: dict, clusters: list[dict], buckets: lis
 
 @query_matcher.handle()
 async def handle_query(event: MessageEvent) -> None:
+    # bug#4 诊断:确认 handler 被触发 + raw_message 实际内容（含不可见字符）
+    logger.info(f"[词频] query 进入 handler: raw_message={event.raw_message!r}")
     ge = await _ensure_group(event)
     query = parse_query(event.raw_message.strip())
     if query is None:
+        # parse 失败但 matcher 触发了（regex 与 parse_query 末尾 $ 锚点差异），
+        # 这种"半静默"路径用户最困惑，单独打 warning
+        logger.warning(f"[词频] query 解析失败: raw={event.raw_message!r}")
         await query_matcher.finish("查询格式错误")
         return
     cfg_err = _validate_config()

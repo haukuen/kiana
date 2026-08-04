@@ -476,16 +476,15 @@ async def test_ai_request_error_classified_as_service_error() -> None:
     with patch(
         "httpx.AsyncClient.post",
         new=AsyncMock(side_effect=httpx.ConnectError("dns failed")),
-    ):
-        with pytest.raises(RefineAIServiceError) as exc_info:
-            await request_refine_summary(
-                base_url="https://example.com/v1",
-                api_key="sk-test",
-                model="gpt-test",
-                timeout_seconds=10,
-                temperature=0.3,
-                prompt_payload="xxx",
-            )
+    ), pytest.raises(RefineAIServiceError) as exc_info:
+        await request_refine_summary(
+            base_url="https://example.com/v1",
+            api_key="sk-test",
+            model="gpt-test",
+            timeout_seconds=10,
+            temperature=0.3,
+            prompt_payload="xxx",
+        )
     assert "AI 请求失败" in str(exc_info.value)
 
 
@@ -747,7 +746,7 @@ async def test_ai_request_body_structure() -> None:
 
     captured: dict = {}
 
-    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001
+    async def _fake_post(self, url, *args, **kwargs):
         captured["url"] = url
         captured["json"] = kwargs.get("json")
         captured["headers"] = kwargs.get("headers")
