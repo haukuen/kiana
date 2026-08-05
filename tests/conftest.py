@@ -19,6 +19,28 @@ def pytest_configure(config: pytest.Config) -> None:
         "driver": "~fastapi",
     }
 
+    config.addinivalue_line(
+        "markers",
+        "live_ai: 真实调用 AI API 的集成测试(默认 skip,需 -m live_ai 显式启用)",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """默认不收集 live_ai 测试,除非 -m live_ai 显式启用。
+
+    `-m` 选项未指定或不是恰好 "live_ai" 时,所有 live_ai 标记的用例都被 skip。
+    这样常规 `pytest` 不会触发真实 AI 调用,且不影响其他 marker 表达式
+    (例如 `pytest -m "not slow"` 时 live_ai 也会被 skip)。
+    """
+    mark_expr = config.getoption("-m") or ""
+    if mark_expr.strip() != "live_ai":
+        skip_live = pytest.mark.skip(
+            reason="live_ai 测试默认 skip,用 -m live_ai 显式启用",
+        )
+        for item in items:
+            if "live_ai" in item.keywords:
+                item.add_marker(skip_live)
+
 
 @pytest.fixture(scope="session", autouse=True)
 async def load_plugins(_nonebot_init: None):

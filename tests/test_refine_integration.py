@@ -522,3 +522,641 @@ async def test_force_refine_overrides_fresh_cache(app: App) -> None:
     assert result is not None
     assert result.summary == "强制重炼的新总结"
     assert result.message_count == 3
+
+
+# ═══════════════════════════════════════════════════════════════
+# 6. bug#1 回归：命令字后必须有空格（force_whitespace）
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_lazy_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`炼化XXX`（无空格粘连）不触发炼化命令。
+
+    复现：用户发 `炼化这个功能怎么用`，历史 bug 会把它解析为
+    `炼化` 命令 + arg="这个功能怎么用"，handler 把 arg 当 label
+    查订阅并回复「未找到标签为「这个功能怎么用」的订阅」。
+
+    修复：commands.py 给所有 on_command 加 force_whitespace=True，
+    强制命令字与参数间必须有空格才触发。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event(
+        "炼化这个功能怎么用", message_id=800
+    )
+    async with app.test_matcher(commands.refine_lazy) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_force_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`强制炼化XXX`（无空格粘连）不触发强制炼化命令。"""
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event(
+        "强制炼化这个功能怎么用", message_id=801
+    )
+    async with app.test_matcher(commands.refine_force) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_lazy_works_with_space(app: App) -> None:
+    """对照（回归保护）：`炼化 张三`（有空格）仍正常触发。
+
+    用一个不存在的 label，验证命令字 + 空格 + 参数 路径走通，
+    handler 正常进入并回复「未找到标签」——说明 force_whitespace
+    没有误伤正常的带空格调用。
+    """
+    from src.plugins.refine import commands
+
+    spaced_event = _make_group_event("炼化 张三", message_id=802)
+    async with app.test_matcher(commands.refine_lazy) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, spaced_event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            spaced_event,
+            "未找到标签为「张三」的订阅",
+            result={"message_id": 8002},
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`炼化订阅XXX`（无空格粘连）不触发订阅命令。
+
+    覆盖 force_whitespace=True 对 refine_subscribe 的保护。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event("炼化订阅xxx", message_id=803)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_list_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`炼化订阅列表XXX`（无空格粘连）不触发列表命令。
+
+    覆盖 force_whitespace=True 对 refine_list 的保护。
+    注意：refine_list 是无参数命令,粘连后缀文本应被拦截。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event("炼化订阅列表xxx", message_id=804)
+    async with app.test_matcher(commands.refine_list) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`炼化取消订阅XXX`（无空格粘连）不触发取消订阅命令。
+
+    覆盖 force_whitespace=True 对 refine_unsubscribe 的保护。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event("炼化取消订阅xxx", message_id=805)
+    async with app.test_matcher(commands.refine_unsubscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_force_glued_with_extra_suffix_ignored(app: App) -> None:
+    """bug#1 回归补强：`强制炼化xxx`（不同粘连文本）也不触发强制炼化命令。
+
+    覆盖 force_whitespace=True 对 refine_force 在不同粘连文本下的保护
+    (test_force_ignores_glued_text_no_space 已覆盖中文粘连,本用例补英文/符号粘连)。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event("强制炼化_test_suffix", message_id=806)
+    async with app.test_matcher(commands.refine_force) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_help_ignores_glued_text_no_space(app: App) -> None:
+    """bug#1 回归：`炼化帮助XXX`（无空格粘连）不触发帮助命令。
+
+    覆盖 force_whitespace=True 对 refine_help 的保护。
+    注意：refine_help 是无参数命令,粘连后缀文本应被拦截。
+    """
+    from src.plugins.refine import commands
+
+    glued_event = _make_group_event("炼化帮助xxx", message_id=807)
+    async with app.test_matcher(commands.refine_help) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, glued_event)
+        ctx.should_not_pass_rule()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 7. bug#2 回归：集合炼化 per-member 独立配额
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_collect_distributes_quota_per_member_not_shared() -> None:
+    """bug#2 回归：集合炼化的 max_messages 应是每成员独立配额，而非集合共享。
+
+    场景：集合{A, B, C}，A 早期发 8 条，B/C 后期各发 8 条，max_messages=8。
+    旧实现（共享预算）：A 8 条吃光预算 → B/C 0 条。
+    新实现（per-member）：A 8 + B 8 + C 8 = 24 条，三人全覆盖。
+    """
+    from src.plugins.message_archive.db import archive_message_event
+    from src.plugins.refine.collector import collect_messages_for_subscription
+    from src.plugins.refine.db import RefineSubscription
+    from src.plugins.un_nickname.db import add_collection_members
+
+    # 构造集合 3 成员
+    await add_collection_members("200001", "test_bug2_collection", ["111", "222", "333"])
+
+    # A 早期发 8 条（event_time 早），B/C 后期发 8 条（event_time 晚）
+    base_ts = 1_800_000_000
+    for i in range(8):
+        await archive_message_event(
+            _make_group_event(
+                f"A的早期发言{i}",
+                user_id=111,
+                group_id=200001,
+                message_id=1000 + i,
+                event_time=base_ts - 1200 + i,
+                nickname="成员A",
+            )
+        )
+    for i in range(8):
+        await archive_message_event(
+            _make_group_event(
+                f"B的后期发言{i}",
+                user_id=222,
+                group_id=200001,
+                message_id=2000 + i,
+                event_time=base_ts - 100 + i,
+                nickname="成员B",
+            )
+        )
+    for i in range(8):
+        await archive_message_event(
+            _make_group_event(
+                f"C的后期发言{i}",
+                user_id=333,
+                group_id=200001,
+                message_id=3000 + i,
+                event_time=base_ts - 50 + i,
+                nickname="成员C",
+            )
+        )
+
+    sub = RefineSubscription(
+        id=999,
+        group_id="200001",
+        target_type="collection",
+        target_value="test_bug2_collection",
+        label="test",
+        created_at=base_ts,
+    )
+
+    with patch("time.time", return_value=float(base_ts + 3600)):
+        collected = await collect_messages_for_subscription(
+            sub, lookback_hours=24, max_messages=8, max_prompt_chars=12000
+        )
+
+    # 关键断言：三人各 8 条，共 24 条
+    assert len(collected.messages) == 24
+    # 各成员贡献均衡
+    a_count = sum(1 for _, name, _ in collected.messages if name == "成员A")
+    b_count = sum(1 for _, name, _ in collected.messages if name == "成员B")
+    c_count = sum(1 for _, name, _ in collected.messages if name == "成员C")
+    assert a_count == 8
+    assert b_count == 8
+    assert c_count == 8
+
+
+@pytest.mark.asyncio
+async def test_collect_per_member_quota_with_small_max() -> None:
+    """bug#2 回归对照：max_messages=2 时，每个成员各采 2 条（而非集合共享只采 2 条）。
+
+    场景：集合 2 成员，各发 5 条，max_messages=2。
+    旧实现（共享预算）：仅采到前 2 条（A 全部），B 0 条。
+    新实现（per-member）：A 2 + B 2 = 4 条，两人都覆盖。
+    """
+    from src.plugins.message_archive.db import archive_message_event
+    from src.plugins.refine.collector import collect_messages_for_subscription
+    from src.plugins.refine.db import RefineSubscription
+    from src.plugins.un_nickname.db import add_collection_members
+
+    await add_collection_members("200001", "test_bug2_small_collection", ["444", "555"])
+
+    base_ts = 1_800_000_000
+    # A 早期发 5 条，B 后期发 5 条
+    for i in range(5):
+        await archive_message_event(
+            _make_group_event(
+                f"小A发言{i}",
+                user_id=444,
+                group_id=200001,
+                message_id=4000 + i,
+                event_time=base_ts - 1200 + i,
+                nickname="成员D",
+            )
+        )
+    for i in range(5):
+        await archive_message_event(
+            _make_group_event(
+                f"小B发言{i}",
+                user_id=555,
+                group_id=200001,
+                message_id=5000 + i,
+                event_time=base_ts - 100 + i,
+                nickname="成员E",
+            )
+        )
+
+    sub = RefineSubscription(
+        id=998,
+        group_id="200001",
+        target_type="collection",
+        target_value="test_bug2_small_collection",
+        label="test_small",
+        created_at=base_ts,
+    )
+
+    with patch("time.time", return_value=float(base_ts + 3600)):
+        collected = await collect_messages_for_subscription(
+            sub, lookback_hours=24, max_messages=2, max_prompt_chars=12000
+        )
+
+    # 期望：每人 2 条，共 4 条
+    assert len(collected.messages) == 4
+    d_count = sum(1 for _, name, _ in collected.messages if name == "成员D")
+    e_count = sum(1 for _, name, _ in collected.messages if name == "成员E")
+    assert d_count == 2
+    assert e_count == 2
+
+
+# ═══════════════════════════════════════════════════════════════
+# 8. commands.py handler body 分支覆盖
+# ═══════════════════════════════════════════════════════════════
+# 这些测试针对 commands.py 里 handler 的具体分支(原 force_whitespace 只覆盖
+# rule 拦截,handler 内部分支仍未覆盖,所以 commands.py 卡在 75%)。
+
+
+@pytest.mark.asyncio
+async def test_help_handler_replies_help_text(app: App) -> None:
+    """refine_help handler body: `炼化帮助` 返回完整帮助文案。"""
+    from src.plugins.refine import commands
+
+    expected = "\n".join([
+        "🧪 炼化插件帮助",
+        "",
+        "订阅某个用户或某集合的发言，按需用 AI 生成简要总结；",
+        "结果与订阅一一对应，新结果自动覆盖旧结果。",
+        "",
+        "命令：",
+        "  炼化订阅 <标签> user:<qq>",
+        "  炼化订阅 <标签> collection:<名>",
+        "  炼化订阅 <标签> 集合 <名>",
+        "  炼化订阅 <标签> @某人",
+        "  炼化订阅列表",
+        "  炼化取消订阅 <标签>",
+        "  炼化 <标签>          # 缓存新鲜直接返回，过期才重炼",
+        "  强制炼化 <标签>      # 跳过新鲜检查与冷却，强制重炼",
+    ])
+
+    event = _make_group_event("炼化帮助", message_id=900)
+    async with app.test_matcher(commands.refine_help) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, expected, result={"message_id": 9001})
+
+
+@pytest.mark.asyncio
+async def test_list_handler_no_subscriptions(app: App) -> None:
+    """refine_list handler body: 无订阅时返回空提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化订阅列表", message_id=901)
+    async with app.test_matcher(commands.refine_list) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event,
+            "本群暂无炼化订阅。发送 `炼化订阅 <标签> @某人` 添加",
+            result={"message_id": 9010},
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_handler_with_subscription(app: App) -> None:
+    """refine_list handler body: 有订阅时返回格式化列表。"""
+    from datetime import datetime as _dt
+
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import add_subscription
+    from src.storage import get_db
+
+    sub = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="目标"
+    )
+    assert sub is not None
+
+    # 把 created_at 改成固定值,使 _format_subscription_line 的输出稳定
+    fixed_now = 1_700_000_000
+    await get_db().execute(
+        "UPDATE refine_subscription SET created_at = ? WHERE id = ?",
+        (fixed_now, sub.id),
+    )
+
+    expected_line = (
+        f"  • [目标] 用户=555  "
+        f"(创建于 {_dt.fromtimestamp(fixed_now).strftime('%Y-%m-%d %H:%M')})"
+    )
+    expected_msg = (
+        f"📌 本群共 1 个炼化订阅:\n"
+        f"{expected_line}\n"
+        f"\n使用 `炼化 <标签>` 查看或触发提炼"
+    )
+
+    event = _make_group_event("炼化订阅列表", message_id=902)
+    async with app.test_matcher(commands.refine_list) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, expected_msg, result={"message_id": 9020})
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_handler_no_label(app: App) -> None:
+    """refine_unsubscribe handler body: 无标签参数 → 用法提示。"""
+    from src.plugins.refine import commands
+
+    # 空参数
+    event = _make_group_event("炼化取消订阅", message_id=903)
+    async with app.test_matcher(commands.refine_unsubscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "用法：炼化取消订阅 <标签>", result={"message_id": 9030})
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_handler_label_not_found(app: App) -> None:
+    """refine_unsubscribe handler body: 标签不存在 → 未找到提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化取消订阅 不存在的标签", message_id=904)
+    async with app.test_matcher(commands.refine_unsubscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "未找到标签为「不存在的标签」的订阅", result={"message_id": 9040})
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_handler_success(app: App) -> None:
+    """refine_unsubscribe handler body: 成功取消订阅。"""
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import add_subscription
+
+    sub = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="要删的"
+    )
+    assert sub is not None
+
+    event = _make_group_event("炼化取消订阅 要删的", message_id=905)
+    async with app.test_matcher(commands.refine_unsubscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event, "✅ 已取消订阅 [要删的]，历史结果一并删除", result={"message_id": 9050}
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_handler_no_args(app: App) -> None:
+    """refine_subscribe handler body: 仅 `炼化订阅` 无参数 → 用法提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化订阅", message_id=906)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event,
+            "用法：炼化订阅 <标签> <user:qq | collection:名 | 集合 名 | @某人>",
+            result={"message_id": 9060},
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_handler_unresolvable_target(app: App) -> None:
+    """refine_subscribe handler body: 有标签但目标前缀不识别 → 无法识别提示。
+
+    parts 长度 >= 2 才会走 resolve_target_type_and_value;`foo:bar` 的 prefix
+    不是 user/collection/集合,返回 (None, None)。
+    """
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化订阅 标签 foo:bar", message_id=907)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event,
+            (
+                "无法识别订阅目标。支持的写法：\n"
+                "  user:<qq>\n"
+                "  collection:<名>\n"
+                "  集合 <名>\n"
+                "  或直接 @某人"
+            ),
+            result={"message_id": 9070},
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_handler_dup_target(app: App) -> None:
+    """refine_subscribe handler body: 目标已被订阅 → 冲突提示。"""
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import add_subscription
+
+    existing = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="已有"
+    )
+    assert existing is not None
+
+    event = _make_group_event("炼化订阅 新标签 user:555", message_id=908)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event,
+            "该目标已被订阅，标签为「已有」",
+            result={"message_id": 9080},
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_handler_dup_label(app: App) -> None:
+    """refine_subscribe handler body: 标签已被使用 → 冲突提示。"""
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import add_subscription
+
+    existing = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="重复标签"
+    )
+    assert existing is not None
+
+    event = _make_group_event("炼化订阅 重复标签 user:666", message_id=909)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event, "标签「重复标签」已被使用，请换一个", result={"message_id": 9090}
+        )
+
+
+@pytest.mark.asyncio
+async def test_subscribe_handler_collection_not_exist(app: App) -> None:
+    """refine_subscribe handler body: 集合不存在 → 提示创建。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化订阅 标签 collection:不存在的集合", message_id=910)
+    async with app.test_matcher(commands.refine_subscribe) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event,
+            (
+                "集合「不存在的集合」不存在或无成员。"
+                "请先用 un_nickname 插件的 `集合 <名> @人` 命令创建。"
+            ),
+            result={"message_id": 9100},
+        )
+
+
+@pytest.mark.asyncio
+async def test_lazy_handler_no_label(app: App) -> None:
+    """refine_lazy handler body: 仅 `炼化` 无参数 → 用法提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化", message_id=911)
+    async with app.test_matcher(commands.refine_lazy) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "用法：炼化 <标签>", result={"message_id": 9110})
+
+
+@pytest.mark.asyncio
+async def test_lazy_handler_config_missing(app: App) -> None:
+    """refine_lazy handler body: AI 配置缺失 → 配置错误提示。
+
+    用一个存在的订阅走到 validate_ai_config,然后 patch config 缺 api_key。
+    """
+    from src.plugins.refine import commands
+    from src.plugins.refine.db import add_subscription
+
+    sub = await add_subscription(
+        group_id="200001", target_type="user", target_value="555", label="配置测"
+    )
+    assert sub is not None
+
+    # 临时把 api_key 清空(本文件 autouse fixture 已配好,这里覆盖)
+    import src.plugins.refine as rp
+    saved = rp.config.refine_ai_api_key
+    rp.config.refine_ai_api_key = ""
+    try:
+        event = _make_group_event("炼化 配置测", message_id=912)
+        async with app.test_matcher(commands.refine_lazy) as ctx:
+            bot = ctx.create_bot(base=Bot, self_id="987654321")
+            _expect_bot_not_muted(ctx)
+            ctx.receive_event(bot, event)
+            ctx.should_pass_rule()
+            # validate_ai_config 的具体报错文案取决于 RefineConfigError 信息,
+            # 这里只校验前缀(完整文案可能与具体配置项有关)
+            ctx.should_call_send(
+                event,
+                "❌ AI 配置缺失：refine_ai_api_key 未配置",
+                result={"message_id": 9120},
+            )
+    finally:
+        rp.config.refine_ai_api_key = saved
+
+
+@pytest.mark.asyncio
+async def test_lazy_handler_label_not_found(app: App) -> None:
+    """refine_lazy handler body: 标签不存在 → 未找到提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("炼化 不存在的标签", message_id=913)
+    async with app.test_matcher(commands.refine_lazy) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "未找到标签为「不存在的标签」的订阅", result={"message_id": 9130})
+
+
+@pytest.mark.asyncio
+async def test_force_handler_no_label(app: App) -> None:
+    """refine_force handler body: 仅 `强制炼化` 无参数 → 用法提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("强制炼化", message_id=914)
+    async with app.test_matcher(commands.refine_force) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "用法：强制炼化 <标签>", result={"message_id": 9140})
+
+
+@pytest.mark.asyncio
+async def test_force_handler_label_not_found(app: App) -> None:
+    """refine_force handler body: 标签不存在 → 未找到提示。"""
+    from src.plugins.refine import commands
+
+    event = _make_group_event("强制炼化 不存在的标签", message_id=915)
+    async with app.test_matcher(commands.refine_force) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        _expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(event, "未找到标签为「不存在的标签」的订阅", result={"message_id": 9150})

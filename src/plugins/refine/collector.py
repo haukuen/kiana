@@ -49,7 +49,13 @@ async def collect_messages_for_subscription(
     max_prompt_chars: int,  # 保留参数以保持调用方对称
     period_end: int | None = None,
 ) -> CollectedMessages:
-    """采集一个订阅在回看窗口内的发言。"""
+    """采集一个订阅在回看窗口内的发言。
+
+    ``max_messages`` 是**每成员独立配额**而非集合共享预算：集合订阅时每个
+    成员各自最多采 ``max_messages`` 条，避免早期话痨成员吃光预算导致后续
+    成员 0 条。采到的多成员消息按 ``event_time`` 升序统一排序后返回，再交
+    由 ``build_prompt_payload`` 做字符预算截断。
+    """
     end = period_end if period_end is not None else int(time.time())
     start = end - lookback_hours * 3600
 
@@ -77,16 +83,22 @@ async def collect_messages_for_subscription(
         return CollectedMessages(messages=[], period_start=start, period_end=end)
 
     target_set = set(user_ids)
+    # per-member 独立配额：每个成员各自最多采 max_messages 条，
+    # 而不是集合共享 max_messages。修复 bug：旧实现共享预算，时间靠前的
+    # 成员会吃光预算，后面的人 0 条。
+    per_member_count: dict[str, int] = dict.fromkeys(target_set, 0)
     picked: list[tuple[int, str, str]] = []
     for msg in archived:
         if msg.user_id not in target_set:
+            continue
+        if per_member_count[msg.user_id] >= max_messages:
+            # 该成员已达上限，跳过（不 break，继续看其他成员）
             continue
         text = msg.plain_text.strip()
         if not text:
             continue
         picked.append((msg.event_time, msg.sender_name, text))
-        if len(picked) >= max_messages:
-            break
+        per_member_count[msg.user_id] += 1
 
     return CollectedMessages(messages=picked, period_start=start, period_end=end)
 

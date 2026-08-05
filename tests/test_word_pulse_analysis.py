@@ -7,8 +7,10 @@ classify_message 应当对纯 alias 命中的消息返回主名词。
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from nonebug import App
 
@@ -107,3 +109,49 @@ async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) 
 
     user_msg = captured_messages[0][1]["content"]
     assert "别名" not in user_msg
+
+
+# ── bug#3 回归：_request_llm 直接发 json_object，不走 strict→fallback ──
+
+
+@pytest.mark.asyncio
+async def test_request_llm_uses_json_object_not_strict(app: App) -> None:
+    """bug#3 回归：_request_llm 直接发 response_format=json_object，不走 strict→fallback。
+
+    通过 httpx.MockTransport 捕获实际请求体，断言：
+    1. response_format 是 {"type": "json_object"}（不是 strict json_schema）
+    2. 只发一次请求（无降级重试）
+    """
+    from src.plugins.word_pulse.ai import _request_llm  # noqa: PLC0415
+
+    captured_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        captured_bodies.append(body)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"results": []}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    # patch httpx.AsyncClient 以注入 MockTransport（trust_env 仍保留）
+    real_async_client = httpx.AsyncClient
+
+    class _PatchedClient(real_async_client):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    with patch("src.plugins.word_pulse.ai.httpx.AsyncClient", _PatchedClient):
+        result = await _request_llm(
+            base_url="https://example.com", api_key="k", model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.0, timeout_seconds=10.0,
+        )
+
+    assert result == {"results": []}
+    assert len(captured_bodies) == 1, "应只发一次请求（无 strict→fallback 降级）"
+    assert captured_bodies[0]["response_format"] == {"type": "json_object"}
+    assert "strict" not in captured_bodies[0]
