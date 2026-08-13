@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 from nonebot import logger
@@ -130,9 +131,23 @@ async def _request_llm(
     content = _extract_content(payload)
     logger.debug(f"[词频统计] AI 原始输出: {content}")
     try:
-        return json.loads(content)
+        return json.loads(extract_json_text(content))
     except json.JSONDecodeError as e:
         raise WordPulseAIResponseError("模型输出不是合法 JSON") from e
+
+
+def extract_json_text(content: str) -> str:
+    """剥离 markdown 围栏并截取 ``{...}`` 区间。"""
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start == -1 or end == -1 or start > end:
+        raise WordPulseAIResponseError("模型输出中没有 JSON 对象")
+    return stripped[start : end + 1]
 
 
 def _to_ai_error(e: httpx.HTTPStatusError) -> WordPulseAIError:

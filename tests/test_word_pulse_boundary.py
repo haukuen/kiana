@@ -363,10 +363,35 @@ async def test_request_llm_valid_json_content_returns_dict(app: App) -> None:
 async def test_request_llm_invalid_json_content_raises_response_error(app: App) -> None:
     """模型输出 content 不是合法 JSON → WordPulseAIResponseError。
 
-    边界:ai.py:132-135,``json.loads(content)`` 抛 JSONDecodeError →
-    转 WordPulseAIResponseError「模型输出不是合法 JSON」。
-    这是 word_pulse 比 refine 多的一层校验(refine 直接返回原文,
-    word_pulse 要求 content 本身是 JSON)。
+    边界:ai.py 中 ``_request_llm`` 先用 ``extract_json_text`` 剥围栏并截取
+    ``{...}`` 区间，再 ``json.loads``。两条失败路径都应转为
+    ``WordPulseAIResponseError``：
+      - 找不到 ``{...}`` 区间 → 「模型输出中没有 JSON 对象」
+      - 截取到区间但 ``json.loads`` 仍失败 → 「模型输出不是合法 JSON」
+    本用例覆盖后者：content 含花括号但结构非法。
+    """
+    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
+
+    response = _ok_response("{这不是 合法 JSON}")
+    with (
+        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
+        pytest.raises(WordPulseAIResponseError) as exc_info,
+    ):
+        await _request_llm(
+            base_url="https://example.com", api_key="k", model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.0, timeout_seconds=10.0,
+        )
+    assert "模型输出不是合法 JSON" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_request_llm_no_json_braces_raises_response_error(app: App) -> None:
+    """模型输出 content 完全不含 ``{...}`` → WordPulseAIResponseError。
+
+    边界:ai.py ``extract_json_text`` 在剥离围栏后 ``find('{')`` 失败 →
+    抛 WordPulseAIResponseError「模型输出中没有 JSON 对象」。
+    覆盖纯文本/只有围栏没有 JSON 对象的降级路径。
     """
     from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
 
@@ -380,7 +405,7 @@ async def test_request_llm_invalid_json_content_raises_response_error(app: App) 
             messages=[{"role": "user", "content": "hi"}],
             temperature=0.0, timeout_seconds=10.0,
         )
-    assert "模型输出不是合法 JSON" in str(exc_info.value)
+    assert "模型输出中没有 JSON 对象" in str(exc_info.value)
 
 
 # ═══════════════════════════════════════════════════════════════
