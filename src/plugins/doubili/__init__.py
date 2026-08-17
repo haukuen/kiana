@@ -375,6 +375,12 @@ async def handle_douyin_message(
 
     try:
         result = await douyin.get_video_info(content_type, video_id)
+
+        if result.video_url and result.duration_ms > config.MAX_VIDEO_DURATION * 1000:
+            raise VideoDurationExceededError(
+                result.duration_ms // 1000, config.MAX_VIDEO_DURATION
+            )
+
         await douyin_matcher.send(f"{result.title}")
 
         if result.pic_urls:

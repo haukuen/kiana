@@ -19,6 +19,7 @@ class ParseResult:
     title: str
     cover_url: str
     video_url: str = ""
+    duration_ms: int = 0
     pic_urls: list[str] | None = None
     dynamic_urls: list[str] | None = None
     author: str = ""
@@ -26,6 +27,7 @@ class ParseResult:
 
 IOS_HEADER = {
     "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.douyin.com/",
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
 }
 
@@ -33,12 +35,90 @@ ANDROID_HEADER = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 11; Redmi K30 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.72 Mobile Safari/537.36",
 }
 
+WEB_HEADER = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Referer": "https://www.douyin.com/",
+}
+
+TTWID_URL = "https://ttwid.bytedance.com/ttwid/union/register/"
+TTWID_BODY = (
+    '{"region":"cn","aid":1768,"needFid":false,'
+    '"service":"www.ixigua.com","migrate_info":{"ticket":"","source":"node"},'
+    '"cbUrlProtocol":"https","union":true}'
+)
+AWEME_DETAIL_URL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
 # 匹配抖音链接的模式
 PATTERNS = {
     "douyin": re.compile(
         r"https?://(?:v\.douyin\.com/[A-Za-z\d_-]+|www\.douyin\.com/(?:video|note)/\d+)"
     ),
 }
+
+
+async def get_ttwid() -> str:
+    """获取抖音网页版请求所需的 ttwid cookie"""
+    async with AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+        response = await client.post(TTWID_URL, content=TTWID_BODY)
+        response.raise_for_status()
+    ttwid = response.cookies.get("ttwid")
+    if not ttwid:
+        raise ValueError("获取 ttwid 失败")
+    return ttwid
+
+
+async def fetch_aweme_detail(video_id: str) -> dict[str, Any]:
+    """通过抖音 Web API 获取作品详情
+
+    Args:
+        video_id: 作品 ID
+
+    Returns:
+        作品的 aweme_detail 字典
+
+    Raises:
+        ValueError: 请求失败或响应中缺少作品信息
+    """
+    params = {
+        "aweme_id": video_id,
+        "device_platform": "webapp",
+        "aid": "6383",
+        "channel": "channel_pc_web",
+        "pc_client_type": "1",
+        "version_code": "190500",
+        "version_name": "19.5.0",
+        "cookie_enabled": "true",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Chrome",
+        "browser_online": "true",
+        "engine_name": "Blink",
+        "os_name": "Windows",
+        "os_version": "10",
+        "platform": "PC",
+        "screen_width": "1920",
+        "screen_height": "1080",
+        "browser_version": "90.0.4430.212",
+        "engine_version": "90.0.4430.212",
+        "cpu_core_num": "12",
+        "device_memory": "8",
+    }
+    headers = {**WEB_HEADER, "Cookie": f"ttwid={await get_ttwid()}"}
+
+    async with AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+        response = await client.get(AWEME_DETAIL_URL, params=params, headers=headers)
+        response.raise_for_status()
+        if not response.text:
+            raise ValueError("Web API 返回空响应")
+        data = response.json()
+
+    if data.get("status_code") != 0:
+        raise ValueError(f"Web API 返回错误: {data.get('status_msg', '未知错误')}")
+    if not data.get("aweme_detail"):
+        raise ValueError("Web API 响应缺少 aweme_detail")
+    return data["aweme_detail"]
 
 
 class DouyinParser:
@@ -86,7 +166,10 @@ class DouyinParser:
             text = response.text
 
         data: dict[str, Any] = self._format_response(text)
+        return await self._parse_item(data)
 
+    async def _parse_item(self, data: dict[str, Any]) -> ParseResult:
+        """将作品数据转换为统一结果结构"""
         # 检查是否为图文内容
         images = data.get("images")
         if images:
@@ -110,6 +193,7 @@ class DouyinParser:
             cover_url=data["video"]["cover"]["url_list"][0],
             video_url=video_url,
             author=data["author"]["nickname"],
+            duration_ms=data.get("video", {}).get("duration", 0) or 0,
         )
 
     def _format_response(self, text: str) -> dict[str, Any]:
@@ -152,6 +236,13 @@ class DouyinParser:
             if _type == "slides":
                 return await self.parse_slides(video_id)
 
+        # 抖音页面已不再内嵌作品数据，优先使用 Web API
+        try:
+            data = await fetch_aweme_detail(video_id)
+            return await self._parse_item(data)
+        except Exception as e:
+            logger.warning(f"Web API 解析失败 {video_id}: {e}")
+
         for url in [
             self._build_m_douyin_url(_type, video_id),
             share_url,
@@ -167,25 +258,20 @@ class DouyinParser:
     async def parse_slides(self, video_id: str) -> ParseResult:
         """解析多视频链接（如：视频合集、直播回放等）"""
         try:
+            try:
+                data = await fetch_aweme_detail(video_id)
+                return await self._parse_item(data)
+            except Exception as e:
+                logger.warning(f"Web API 解析 slides 失败 {video_id}: {e}")
+
             url = self._build_m_douyin_url("video", video_id)
             async with AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
                 response = await client.get(url, headers=self.ios_headers)
                 response.raise_for_status()
                 text = response.text
 
-            data: dict[str, Any] = self._format_response(text)
-
-            # 获取视频播放地址
-            video_url: str = data["video"]["play_addr"]["url_list"][0].replace("playwm", "play")
-            if video_url:
-                video_url = await get_redirect_url(video_url)
-
-            return ParseResult(
-                title=data["desc"],
-                cover_url=data["video"]["cover"]["url_list"][0],
-                video_url=video_url,
-                author=data["author"]["nickname"],
-            )
+            data = self._format_response(text)
+            return await self._parse_item(data)
         except Exception as e:
             logger.error(f"解析抖音视频失败: {e}", exc_info=True)
             raise VideoFetchError(f"解析抖音视频失败: {e!s}") from e
@@ -240,7 +326,8 @@ async def get_video_info(content_type: str, video_id: str) -> ParseResult:
         share_url = f"https://www.douyin.com/{content_type}/{video_id}"
         video_info = await douyin_parser.parse_share_url(share_url)
         logger.info(
-            f"获取到视频信息: video_url={video_info.video_url}, pic_urls={video_info.pic_urls}"
+            f"获取到视频信息: video_url={video_info.video_url}, "
+            f"duration_ms={video_info.duration_ms}, pic_urls={video_info.pic_urls}"
         )
 
         return video_info
