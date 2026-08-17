@@ -18,8 +18,6 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
-SINA_QUOTE_URL = "https://hq.sinajs.cn/list=gb_qqq"
-SINA_REFERER = "https://finance.sina.com.cn"
 TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q=usQQQ"
 REQUEST_TIMEOUT = 5.0
 DISPLAY_NAME = "纳斯达克100ETF"
@@ -55,7 +53,7 @@ class QQQQuote:
 
 
 class CooldownManager:
-    """群聊查询冷却管理器"""
+    """群聊查询冷却"""
 
     def __init__(self) -> None:
         self._last_call: dict[int, float] = {}
@@ -71,30 +69,8 @@ class CooldownManager:
 cooldown_manager = CooldownManager()
 
 
-def _parse_sina_quote(content: bytes) -> QQQQuote | None:
-    """解析新浪行情返回（GBK 编码的逗号分隔文本）"""
-    try:
-        text = content.decode("gbk", errors="replace")
-        body = text.split('="', 1)[1].strip('";')
-        fields = body.split(",")
-        if len(fields) < 27 or not fields[1]:
-            return None
-        return QQQQuote(
-            name=DISPLAY_NAME,
-            price=float(fields[1]),
-            change=float(fields[4]),
-            percent=float(fields[2]),
-            open=float(fields[5]),
-            high=float(fields[6]),
-            low=float(fields[7]),
-            prev_close=float(fields[26]),
-        )
-    except (IndexError, ValueError):
-        return None
-
-
 def _parse_tencent_quote(content: bytes) -> QQQQuote | None:
-    """解析腾讯行情返回（GBK 编码的波浪号分隔文本）"""
+    """解析腾讯行情返回"""
     try:
         text = content.decode("gbk", errors="replace")
         body = text.split('="', 1)[1].strip('";')
@@ -116,18 +92,8 @@ def _parse_tencent_quote(content: bytes) -> QQQQuote | None:
 
 
 async def fetch_qqq_quote() -> QQQQuote | None:
-    """获取 QQQ 行情，优先新浪接口，失败时回退腾讯接口"""
+    """获取 QQQ 行情"""
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        try:
-            response = await client.get(SINA_QUOTE_URL, headers={"Referer": SINA_REFERER})
-            response.raise_for_status()
-            quote = _parse_sina_quote(response.content)
-            if quote is not None:
-                return quote
-            logger.warning("新浪行情解析失败，回退腾讯接口")
-        except httpx.HTTPError as e:
-            logger.warning(f"新浪行情请求失败: {e}")
-
         try:
             response = await client.get(TENCENT_QUOTE_URL)
             response.raise_for_status()
@@ -143,7 +109,7 @@ async def fetch_qqq_quote() -> QQQQuote | None:
 
 @qqq.handle()
 async def handle_group_qqq_query(event: GroupMessageEvent) -> None:
-    """处理群聊 QQQ 查询（带冷却机制）"""
+    """群聊查询（带冷却）"""
     remaining_time = cooldown_manager.remaining(event.group_id, config.qqq_cooldown_time)
     if remaining_time > 0:
         await qqq.finish(f"冷却中，请等待 {remaining_time} 秒后再试")
@@ -158,7 +124,7 @@ async def handle_group_qqq_query(event: GroupMessageEvent) -> None:
 
 @qqq.handle()
 async def handle_private_qqq_query(event: PrivateMessageEvent) -> None:
-    """处理私聊 QQQ 查询（无冷却限制）"""
+    """私聊查询"""
     quote = await fetch_qqq_quote()
     if quote is None:
         await qqq.finish("获取 QQQ 行情失败，请稍后重试")
