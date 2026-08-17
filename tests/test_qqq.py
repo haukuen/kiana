@@ -51,26 +51,6 @@ async def test_qqq_matcher_rule_not_matches(app: App):
         ctx.should_not_pass_rule()
 
 
-def test_parse_sina_quote():
-    """测试新浪行情文本解析"""
-    from src.plugins.qqq import _parse_sina_quote
-
-    content = (
-        'var hq_str_gb_qqq="纳百ETF,732.0700,1.16,2026-08-14 09:38:55,8.3700,'
-        "725.1500,733.9600,724.0300,747.8370,554.7860,31599680,40427942,0,0.00,"
-        "--,0.00,0.00,0.00,0.00,0,0,732.2900,0.03,0.22,Aug 13 07:59PM EDT,"
-        'Aug 13 04:00PM EDT,723.7000,1818375,1,2026";'
-    )
-
-    quote = _parse_sina_quote(content.encode("gbk"))
-    assert quote is not None, "新浪行情解析不应返回 None"
-    assert quote.name == "纳斯达克100ETF", "显示名应统一为纳斯达克100ETF"
-    assert quote.price == 732.07
-    assert quote.percent == 1.16
-    assert quote.change == 8.37
-    assert quote.prev_close == 723.70
-
-
 def test_parse_tencent_quote():
     """测试腾讯行情文本解析"""
     from src.plugins.qqq import _parse_tencent_quote

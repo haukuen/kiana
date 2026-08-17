@@ -415,7 +415,7 @@ def format_fund_holdings(fund_code: str, holdings_data: dict) -> str:
 
         # 获取最新季度的数据
         unique_quarters = holdings_df["季度"].unique()
-        latest_quarter = sorted(unique_quarters, reverse=True)[0]
+        latest_quarter = max(unique_quarters)
         latest_holdings = holdings_df[holdings_df["季度"] == latest_quarter].head(10)
 
         info_lines = [

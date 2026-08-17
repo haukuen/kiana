@@ -16,7 +16,7 @@ db = get_db()
 
 def classify_message(
     msg_text: str, char_pool: set[str], cluster_terms: dict[str, set[str]],
-) -> list[str] | None | Literal["GREY"]:
+) -> list[str] | Literal["GREY"] | None:
     if not msg_text:
         return None
     msg_chars = set(msg_text)
