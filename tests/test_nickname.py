@@ -5,9 +5,16 @@
 """
 
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
-from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot, GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import (
+    Bot as OneBotV11Bot,
+    GroupMessageEvent,
+    Message,
+    MessageSegment,
+)
+from nonebot.adapters.onebot.v11.exception import ActionFailed
 from nonebug import App
 
 
@@ -27,6 +34,16 @@ def _make_event(text: str) -> GroupMessageEvent:
         raw_message=text,
         font=0,
         sender={"user_id": 111, "nickname": "u", "card": "", "role": "member"},  # type: ignore[arg-type]
+    )
+
+
+def _action_failed() -> ActionFailed:
+    return ActionFailed(
+        status="failed",
+        retcode=1200,
+        data=None,
+        message="Get Uid Error",
+        wording="Get Uid Error",
     )
 
 
@@ -138,3 +155,211 @@ async def test_replace_handler_no_match_skips_send(app: App) -> None:
         await handlers.handle_replace_nickname(bot, event)
         # 缓存未被写入，证明未走到 get_cached_nickname_map 分支
         assert "222" not in _nickname_cache
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_success_skips_member_query(app: App, monkeypatch) -> None:
+    """首次发送成功时不应查询群成员列表。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
+    )
+    monkeypatch.setattr(
+        handlers, "get_cached_collection_map", AsyncMock(return_value={})
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at老张")
+        ctx.should_call_send(event, Message(MessageSegment.at("333")), bot=bot)
+
+        await handlers.handle_replace_nickname(bot, event)
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_filters_departed_targets_and_retries(
+    app: App, monkeypatch
+) -> None:
+    """发送失败后应同时过滤昵称和集合中的非群成员。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
+    )
+    monkeypatch.setattr(
+        handlers,
+        "get_cached_collection_map",
+        AsyncMock(return_value={"小组": ["333", "444"]}),
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at老张，at小组 出发")
+        ctx.should_call_send(
+            event,
+            Message(
+                [
+                    MessageSegment.at("333"),
+                    MessageSegment.text("，"),
+                    MessageSegment.at("333"),
+                    MessageSegment.at("444"),
+                    MessageSegment.text(" 出发"),
+                ]
+            ),
+            exception=_action_failed(),
+            bot=bot,
+        )
+        ctx.should_call_api(
+            "get_group_member_list",
+            {"group_id": 222, "no_cache": True},
+            result=[{"user_id": 111}, {"user_id": 444}],
+        )
+        ctx.should_call_send(
+            event,
+            Message(
+                [
+                    MessageSegment.text("at老张"),
+                    MessageSegment.text("，"),
+                    MessageSegment.at("444"),
+                    MessageSegment.text(" 出发"),
+                ]
+            ),
+            bot=bot,
+        )
+
+        await handlers.handle_replace_nickname(bot, event)
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_all_targets_departed_stays_silent(
+    app: App, monkeypatch
+) -> None:
+    """过滤后没有有效目标时不应再次发送。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
+    )
+    monkeypatch.setattr(
+        handlers, "get_cached_collection_map", AsyncMock(return_value={})
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at老张")
+        ctx.should_call_send(
+            event,
+            Message(MessageSegment.at("333")),
+            exception=_action_failed(),
+            bot=bot,
+        )
+        ctx.should_call_api(
+            "get_group_member_list",
+            {"group_id": 222, "no_cache": True},
+            result=[{"user_id": 111}],
+        )
+
+        await handlers.handle_replace_nickname(bot, event)
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_member_query_failure_stays_silent(
+    app: App, monkeypatch
+) -> None:
+    """成员列表查询失败时不应继续发送或向外抛错。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
+    )
+    monkeypatch.setattr(
+        handlers, "get_cached_collection_map", AsyncMock(return_value={})
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at老张")
+        ctx.should_call_send(
+            event,
+            Message(MessageSegment.at("333")),
+            exception=_action_failed(),
+            bot=bot,
+        )
+        ctx.should_call_api(
+            "get_group_member_list",
+            {"group_id": 222, "no_cache": True},
+            exception=RuntimeError("query failed"),
+        )
+
+        await handlers.handle_replace_nickname(bot, event)
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_retry_failure_stays_silent(app: App, monkeypatch) -> None:
+    """过滤后的单次重试仍失败时不应向外抛错。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        handlers,
+        "get_cached_collection_map",
+        AsyncMock(return_value={"小组": ["333", "444"]}),
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at小组")
+        ctx.should_call_send(
+            event,
+            Message([MessageSegment.at("333"), MessageSegment.at("444")]),
+            exception=_action_failed(),
+            bot=bot,
+        )
+        ctx.should_call_api(
+            "get_group_member_list",
+            {"group_id": 222, "no_cache": True},
+            result=[{"user_id": 444}],
+        )
+        ctx.should_call_send(
+            event,
+            Message(MessageSegment.at("444")),
+            exception=_action_failed(),
+            bot=bot,
+        )
+
+        await handlers.handle_replace_nickname(bot, event)
+
+
+@pytest.mark.asyncio
+async def test_replace_handler_unrelated_send_failure_does_not_retry(
+    app: App, monkeypatch
+) -> None:
+    """目标均在群内时应将发送失败视为其他故障，不再发送。"""
+    from src.plugins.un_nickname import handlers
+
+    monkeypatch.setattr(
+        handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
+    )
+    monkeypatch.setattr(
+        handlers, "get_cached_collection_map", AsyncMock(return_value={})
+    )
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("at老张")
+        ctx.should_call_send(
+            event,
+            Message(MessageSegment.at("333")),
+            exception=_action_failed(),
+            bot=bot,
+        )
+        ctx.should_call_api(
+            "get_group_member_list",
+            {"group_id": 222, "no_cache": True},
+            result=[{"user_id": 111}, {"user_id": 333}],
+        )
+
+        await handlers.handle_replace_nickname(bot, event)

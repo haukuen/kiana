@@ -9,6 +9,7 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     MessageSegment,
 )
+from nonebot.adapters.onebot.v11.exception import ActionFailed
 
 from src.plugins.forward_utils import send_forward_message
 
@@ -140,15 +141,20 @@ def _resolve_at_target(
     sender_id: str,
     nickname_to_qq: dict[str, str],
     collection_to_users: dict[str, list[str]],
+    active_member_ids: set[str] | None = None,
 ) -> list[MessageSegment] | None:
     """解析 at 目标，返回消息段列表或 None（未找到）"""
     qq = nickname_to_qq.get(name)
-    if qq:
+    if qq and (active_member_ids is None or qq in active_member_ids):
         return [MessageSegment.at(qq)]
 
     members = collection_to_users.get(name)
     if members:
-        filtered = [uid for uid in members if uid != sender_id]
+        filtered = [
+            uid
+            for uid in members
+            if uid != sender_id and (active_member_ids is None or uid in active_member_ids)
+        ]
         if filtered:
             return [MessageSegment.at(uid) for uid in filtered]
 
@@ -235,6 +241,7 @@ def _replace_text_segment(
     sender_id: str,
     nickname_to_qq: dict[str, str],
     collection_to_users: dict[str, list[str]],
+    active_member_ids: set[str] | None = None,
 ) -> tuple[list[MessageSegment], bool]:
     """替换单个 text 段中的 at 昵称，返回（消息段列表, 是否发生替换）"""
     parts: list[MessageSegment] = []
@@ -247,7 +254,13 @@ def _replace_text_segment(
             parts.append(MessageSegment.text(text[last_pos:start]))
 
         name = match.group(1)
-        at_segments = _resolve_at_target(name, sender_id, nickname_to_qq, collection_to_users)
+        at_segments = _resolve_at_target(
+            name,
+            sender_id,
+            nickname_to_qq,
+            collection_to_users,
+            active_member_ids,
+        )
         if at_segments:
             parts.extend(at_segments)
             replaced = True
@@ -261,32 +274,19 @@ def _replace_text_segment(
     return parts, replaced
 
 
-@replace_nickname_matcher.handle()
-async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
-    """处理昵称替换，将 'at昵称' 替换为实际的 @mentions"""
-    group_id = str(event.group_id)
-    sender_id = str(event.user_id)
-
-    # 先扫描所有 text 段收集候选名，无命中则直接返回，避免无谓的缓存/DB 查询
-    matches_by_text: dict[str, list[re.Match[str]]] = {}
-    for seg in event.message:
-        if seg.type != "text":
-            continue
-        text = seg.data["text"]
-        if text not in matches_by_text:
-            ms = list(AT_NICKNAME_PATTERN.finditer(text))
-            if ms:
-                matches_by_text[text] = ms
-    if not matches_by_text:
-        return
-
-    nickname_to_qq = await get_cached_nickname_map(group_id)
-    collection_to_users = await get_cached_collection_map(group_id)
-
+def _build_replacement_message(
+    message: Message,
+    matches_by_text: dict[str, list[re.Match[str]]],
+    sender_id: str,
+    nickname_to_qq: dict[str, str],
+    collection_to_users: dict[str, list[str]],
+    active_member_ids: set[str] | None = None,
+) -> tuple[Message, bool]:
+    """构造昵称与集合替换后的消息。"""
     new_msg = Message()
     replaced = False
 
-    for seg in event.message:
+    for seg in message:
         if seg.type != "text":
             new_msg.append(seg)
             continue
@@ -297,13 +297,112 @@ async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
             continue
 
         parts, did_replace = _replace_text_segment(
-            seg.data["text"], matches, sender_id, nickname_to_qq, collection_to_users
+            seg.data["text"],
+            matches,
+            sender_id,
+            nickname_to_qq,
+            collection_to_users,
+            active_member_ids,
         )
         new_msg.extend(parts)
         replaced = replaced or did_replace
 
-    if replaced:
+    return new_msg, replaced
+
+
+def _collect_text_matches(message: Message) -> dict[str, list[re.Match[str]]]:
+    """收集消息中需要解析的 at 名称。"""
+    matches_by_text: dict[str, list[re.Match[str]]] = {}
+    for seg in message:
+        if seg.type != "text":
+            continue
+        text = seg.data["text"]
+        if text not in matches_by_text:
+            matches = list(AT_NICKNAME_PATTERN.finditer(text))
+            if matches:
+                matches_by_text[text] = matches
+    return matches_by_text
+
+
+async def _retry_replacement_after_send_failure(
+    bot: Bot,
+    event: GroupMessageEvent,
+    matches_by_text: dict[str, list[re.Match[str]]],
+    sender_id: str,
+    nickname_to_qq: dict[str, str],
+    collection_to_users: dict[str, list[str]],
+    failed_message: Message,
+) -> None:
+    """过滤非群成员后静默重试一次。"""
+    group_id = str(event.group_id)
+    try:
+        members = await bot.call_api(
+            "get_group_member_list", group_id=event.group_id, no_cache=True
+        )
+        active_member_ids = {str(member["user_id"]) for member in members}
+    except Exception as error:
+        logger.warning(f"获取群 {group_id} 成员列表失败，放弃昵称消息重试: {error}")
+        return
+
+    retry_msg, retry_replaced = _build_replacement_message(
+        event.message,
+        matches_by_text,
+        sender_id,
+        nickname_to_qq,
+        collection_to_users,
+        active_member_ids,
+    )
+    if retry_msg == failed_message:
+        logger.warning(f"群 {group_id} 发送失败，但未发现非群成员，不再重试")
+        return
+    if not retry_replaced:
+        logger.info(f"群 {group_id} 的 at 目标均已退群，不再发送")
+        return
+
+    try:
+        await bot.send(event, retry_msg)
+    except Exception as error:
+        logger.warning(f"群 {group_id} 过滤非群成员后仍发送失败: {error}")
+
+
+@replace_nickname_matcher.handle()
+async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
+    """处理昵称替换，将 'at昵称' 替换为实际的 @mentions"""
+    group_id = str(event.group_id)
+    sender_id = str(event.user_id)
+    matches_by_text = _collect_text_matches(event.message)
+    if not matches_by_text:
+        return
+
+    try:
+        nickname_to_qq = await get_cached_nickname_map(group_id)
+        collection_to_users = await get_cached_collection_map(group_id)
+    except Exception as error:
+        logger.warning(f"读取群 {group_id} 昵称数据失败，跳过替换: {error}")
+        return
+
+    new_msg, replaced = _build_replacement_message(
+        event.message, matches_by_text, sender_id, nickname_to_qq, collection_to_users
+    )
+    if not replaced:
+        return
+
+    try:
         await bot.send(event, new_msg)
+    except ActionFailed as send_error:
+        logger.warning(f"群 {group_id} 昵称消息发送失败，尝试过滤非群成员: {send_error}")
+        # NapCat 无法解析非群成员时会在真正发送前让整条消息失败。
+        await _retry_replacement_after_send_failure(
+            bot,
+            event,
+            matches_by_text,
+            sender_id,
+            nickname_to_qq,
+            collection_to_users,
+            new_msg,
+        )
+    except Exception as error:
+        logger.warning(f"群 {group_id} 昵称消息发送失败，跳过重试: {error}")
 
 
 @delete_nickname_matcher.handle()
