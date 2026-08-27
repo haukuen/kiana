@@ -41,6 +41,7 @@ from .utils import (
     get_member_names,
     parse_collection_name_from_command,
     parse_delete_command,
+    split_nickname_list,
     validate_collection_name,
     validate_nickname,
 )
@@ -170,11 +171,16 @@ async def _send_nickname_list(
     """发送昵称列表，过多时使用合并转发避免刷屏"""
     text = ", ".join(nicknames)
     if len(text) > 200:
-        node = {
-            "type": "node",
-            "data": {"name": forward_title, "uin": bot.self_id, "content": text},
-        }
-        await send_forward_message(bot, event, [node])
+        # 合并转发中每个节点也是一条独立消息，超长同样会被 QQ 拒发，
+        # 因此先按长度切分，每段作为一个转发节点。
+        nodes = [
+            {
+                "type": "node",
+                "data": {"name": forward_title, "uin": bot.self_id, "content": ", ".join(group)},
+            }
+            for group in split_nickname_list(nicknames)
+        ]
+        await send_forward_message(bot, event, nodes)
     else:
         await add_nickname_matcher.finish(f"{prefix}{text}")
 

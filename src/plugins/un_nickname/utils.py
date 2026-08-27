@@ -13,6 +13,10 @@ VALID_NICKNAME_PATTERN = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9]+$")
 # 名字后不能再跟名字字符（避免贪婪吞掉后续中文，也兼容中文标点/句尾）。
 AT_NICKNAME_PATTERN = re.compile(r"\bat ?([\u4e00-\u9fa5a-zA-Z0-9]+)(?![\u4e00-\u9fa5a-zA-Z0-9])")
 
+# 单个合并转发节点内容的最大字符数。QQ 单条文本消息上限约 4500 字节，
+# 汉字 UTF-8 占 3 字节（约 1500 字符），取 1000 留出余量。
+FORWARD_NODE_MAX_CHARS = 1000
+
 
 def is_valid_nickname(nickname: str) -> bool:
     """检查昵称格式是否有效"""
@@ -90,6 +94,35 @@ def parse_collection_name_from_command(text: str, prefix: str) -> str | None:
     rest = text[len(prefix) :].strip()
     parts = rest.split()
     return parts[0] if parts else None
+
+
+def split_nickname_list(
+    nicknames: list[str], max_chars: int = FORWARD_NODE_MAX_CHARS
+) -> list[list[str]]:
+    """将昵称列表按累计长度切分为多段
+
+    Args:
+        nicknames: 昵称列表
+        max_chars: 单段最大字符数（按 ", ".join 后的长度计）
+
+    Returns:
+        切分后的昵称段列表，每段 join 后不超过 max_chars
+    """
+    groups: list[list[str]] = []
+    current: list[str] = []
+    current_len = 0
+    for name in nicknames:
+        extra = len(name) + (2 if current else 0)
+        if current and current_len + extra > max_chars:
+            groups.append(current)
+            current = []
+            current_len = 0
+            extra = len(name)
+        current.append(name)
+        current_len += extra
+    if current:
+        groups.append(current)
+    return groups
 
 
 def build_delete_reply(success: list[str], not_found: list[str]) -> str:

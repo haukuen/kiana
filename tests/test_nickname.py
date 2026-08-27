@@ -139,6 +139,81 @@ def test_is_replacing_nickname_consistency(text: str, should_trigger: bool) -> N
 # ============== handler 行为冒烟 ==============
 
 
+# ============== 昵称列表切分（合并转发分节点） ==============
+
+
+@pytest.mark.parametrize(
+    "nicknames,max_chars,expected_groups",
+    [
+        # 少量昵称：单段
+        (["老张", "小李"], 1000, [["老张", "小李"]]),
+        # 超出单段上限：按累计长度切分
+        (["a" * 10] * 3, 21, [["a" * 10], ["a" * 10], ["a" * 10]]),
+        (["a" * 10, "b" * 10], 21, [["a" * 10], ["b" * 10]]),
+        (["a" * 10, "b" * 10], 22, [["a" * 10, "b" * 10]]),
+        # 分隔符 ", "（2 字符）计入长度：10 + 2 + 10 = 22 为临界
+        (["a" * 10, "b" * 10], 21, [["a" * 10], ["b" * 10]]),
+        (["a" * 10, "b" * 10], 22, [["a" * 10, "b" * 10]]),
+        # 单个昵称超上限：独占一段，不强制截断
+        (["a" * 30], 10, [["a" * 30]]),
+        ([], 1000, []),
+    ],
+)
+def test_split_nickname_list(
+    nicknames: list[str], max_chars: int, expected_groups: list[list[str]]
+) -> None:
+    """应按 join 后的累计长度切分，且每段 join 结果不超过上限（单昵称除外）"""
+    from src.plugins.un_nickname.utils import split_nickname_list
+
+    groups = split_nickname_list(nicknames, max_chars)
+    assert groups == expected_groups
+    for group in groups:
+        assert len(", ".join(group)) <= max_chars or len(group) == 1
+
+
+def test_split_nickname_list_default_limit() -> None:
+    """默认上限下，超长昵称列表应切分为多段且每段不超限"""
+    from src.plugins.un_nickname.utils import FORWARD_NODE_MAX_CHARS, split_nickname_list
+
+    # 300 个 15 字昵称 + 分隔符，join 后约 5100 字符，远超单节点上限
+    nicknames = [f"昵称{i:03d}" + "x" * 10 for i in range(300)]
+    groups = split_nickname_list(nicknames)
+    assert len(groups) > 1
+    assert [name for group in groups for name in group] == nicknames
+    for group in groups:
+        assert len(", ".join(group)) <= FORWARD_NODE_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_send_nickname_list_splits_forward_nodes(app: App) -> None:
+    """超长昵称列表的合并转发应按长度切分为多个节点，避免单节点超过消息上限"""
+    from unittest.mock import AsyncMock
+
+    from src.plugins.un_nickname import handlers
+    from src.plugins.un_nickname.utils import FORWARD_NODE_MAX_CHARS
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        event = _make_event("查看")
+        nicknames = [f"昵称{i:03d}" + "x" * 10 for i in range(300)]
+
+        call_api = AsyncMock(return_value=None)
+        bot.call_api = call_api  # type: ignore[method-assign]
+
+        await handlers._send_nickname_list(bot, event, nicknames, "该用户的昵称:", "昵称列表")
+
+        call_api.assert_awaited_once()
+        nodes = call_api.await_args.kwargs["messages"]
+        assert len(nodes) > 1
+        assert all(node["type"] == "node" for node in nodes)
+        for node in nodes:
+            content = node["data"]["content"]
+            assert len(content) <= FORWARD_NODE_MAX_CHARS
+        # 所有昵称按原顺序出现在节点中
+        joined = ", ".join(node["data"]["content"] for node in nodes)
+        assert all(name in joined for name in nicknames)
+
+
 @pytest.mark.asyncio
 async def test_replace_handler_no_match_skips_send(app: App) -> None:
     """无候选名时 handler 应早返回，不查询缓存、不发送消息"""
@@ -165,9 +240,7 @@ async def test_replace_handler_success_skips_member_query(app: App, monkeypatch)
     monkeypatch.setattr(
         handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
     )
-    monkeypatch.setattr(
-        handlers, "get_cached_collection_map", AsyncMock(return_value={})
-    )
+    monkeypatch.setattr(handlers, "get_cached_collection_map", AsyncMock(return_value={}))
 
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
@@ -178,9 +251,7 @@ async def test_replace_handler_success_skips_member_query(app: App, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_replace_handler_filters_departed_targets_and_retries(
-    app: App, monkeypatch
-) -> None:
+async def test_replace_handler_filters_departed_targets_and_retries(app: App, monkeypatch) -> None:
     """发送失败后应同时过滤昵称和集合中的非群成员。"""
     from src.plugins.un_nickname import handlers
 
@@ -232,18 +303,14 @@ async def test_replace_handler_filters_departed_targets_and_retries(
 
 
 @pytest.mark.asyncio
-async def test_replace_handler_all_targets_departed_stays_silent(
-    app: App, monkeypatch
-) -> None:
+async def test_replace_handler_all_targets_departed_stays_silent(app: App, monkeypatch) -> None:
     """过滤后没有有效目标时不应再次发送。"""
     from src.plugins.un_nickname import handlers
 
     monkeypatch.setattr(
         handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
     )
-    monkeypatch.setattr(
-        handlers, "get_cached_collection_map", AsyncMock(return_value={})
-    )
+    monkeypatch.setattr(handlers, "get_cached_collection_map", AsyncMock(return_value={}))
 
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
@@ -264,18 +331,14 @@ async def test_replace_handler_all_targets_departed_stays_silent(
 
 
 @pytest.mark.asyncio
-async def test_replace_handler_member_query_failure_stays_silent(
-    app: App, monkeypatch
-) -> None:
+async def test_replace_handler_member_query_failure_stays_silent(app: App, monkeypatch) -> None:
     """成员列表查询失败时不应继续发送或向外抛错。"""
     from src.plugins.un_nickname import handlers
 
     monkeypatch.setattr(
         handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
     )
-    monkeypatch.setattr(
-        handlers, "get_cached_collection_map", AsyncMock(return_value={})
-    )
+    monkeypatch.setattr(handlers, "get_cached_collection_map", AsyncMock(return_value={}))
 
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
@@ -300,9 +363,7 @@ async def test_replace_handler_retry_failure_stays_silent(app: App, monkeypatch)
     """过滤后的单次重试仍失败时不应向外抛错。"""
     from src.plugins.un_nickname import handlers
 
-    monkeypatch.setattr(
-        handlers, "get_cached_nickname_map", AsyncMock(return_value={})
-    )
+    monkeypatch.setattr(handlers, "get_cached_nickname_map", AsyncMock(return_value={}))
     monkeypatch.setattr(
         handlers,
         "get_cached_collection_map",
@@ -334,18 +395,14 @@ async def test_replace_handler_retry_failure_stays_silent(app: App, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_replace_handler_unrelated_send_failure_does_not_retry(
-    app: App, monkeypatch
-) -> None:
+async def test_replace_handler_unrelated_send_failure_does_not_retry(app: App, monkeypatch) -> None:
     """目标均在群内时应将发送失败视为其他故障，不再发送。"""
     from src.plugins.un_nickname import handlers
 
     monkeypatch.setattr(
         handlers, "get_cached_nickname_map", AsyncMock(return_value={"老张": "333"})
     )
-    monkeypatch.setattr(
-        handlers, "get_cached_collection_map", AsyncMock(return_value={})
-    )
+    monkeypatch.setattr(handlers, "get_cached_collection_map", AsyncMock(return_value={}))
 
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
