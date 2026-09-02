@@ -233,8 +233,10 @@ async def test_replace_handler_no_match_skips_send(app: App) -> None:
 
 
 @pytest.mark.asyncio
-async def test_replace_handler_success_skips_member_query(app: App, monkeypatch) -> None:
-    """首次发送成功时不应查询群成员列表。"""
+async def test_replace_handler_success_quotes_source_and_skips_member_query(
+    app: App, monkeypatch
+) -> None:
+    """首次发送应引用原消息，且成功时不查询群成员列表。"""
     from src.plugins.un_nickname import handlers
 
     monkeypatch.setattr(
@@ -245,7 +247,11 @@ async def test_replace_handler_success_skips_member_query(app: App, monkeypatch)
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
         event = _make_event("at老张")
-        ctx.should_call_send(event, Message(MessageSegment.at("333")), bot=bot)
+        ctx.should_call_send(
+            event,
+            Message([MessageSegment.reply(1), MessageSegment.at("333")]),
+            bot=bot,
+        )
 
         await handlers.handle_replace_nickname(bot, event)
 
@@ -271,6 +277,7 @@ async def test_replace_handler_filters_departed_targets_and_retries(app: App, mo
             event,
             Message(
                 [
+                    MessageSegment.reply(1),
                     MessageSegment.at("333"),
                     MessageSegment.text("，"),
                     MessageSegment.at("333"),
@@ -290,6 +297,7 @@ async def test_replace_handler_filters_departed_targets_and_retries(app: App, mo
             event,
             Message(
                 [
+                    MessageSegment.reply(1),
                     MessageSegment.text("at老张"),
                     MessageSegment.text("，"),
                     MessageSegment.at("444"),
@@ -317,7 +325,7 @@ async def test_replace_handler_all_targets_departed_stays_silent(app: App, monke
         event = _make_event("at老张")
         ctx.should_call_send(
             event,
-            Message(MessageSegment.at("333")),
+            Message([MessageSegment.reply(1), MessageSegment.at("333")]),
             exception=_action_failed(),
             bot=bot,
         )
@@ -345,7 +353,7 @@ async def test_replace_handler_member_query_failure_stays_silent(app: App, monke
         event = _make_event("at老张")
         ctx.should_call_send(
             event,
-            Message(MessageSegment.at("333")),
+            Message([MessageSegment.reply(1), MessageSegment.at("333")]),
             exception=_action_failed(),
             bot=bot,
         )
@@ -375,7 +383,13 @@ async def test_replace_handler_retry_failure_stays_silent(app: App, monkeypatch)
         event = _make_event("at小组")
         ctx.should_call_send(
             event,
-            Message([MessageSegment.at("333"), MessageSegment.at("444")]),
+            Message(
+                [
+                    MessageSegment.reply(1),
+                    MessageSegment.at("333"),
+                    MessageSegment.at("444"),
+                ]
+            ),
             exception=_action_failed(),
             bot=bot,
         )
@@ -386,7 +400,7 @@ async def test_replace_handler_retry_failure_stays_silent(app: App, monkeypatch)
         )
         ctx.should_call_send(
             event,
-            Message(MessageSegment.at("444")),
+            Message([MessageSegment.reply(1), MessageSegment.at("444")]),
             exception=_action_failed(),
             bot=bot,
         )
@@ -409,7 +423,7 @@ async def test_replace_handler_unrelated_send_failure_does_not_retry(app: App, m
         event = _make_event("at老张")
         ctx.should_call_send(
             event,
-            Message(MessageSegment.at("333")),
+            Message([MessageSegment.reply(1), MessageSegment.at("333")]),
             exception=_action_failed(),
             bot=bot,
         )

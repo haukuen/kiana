@@ -282,14 +282,15 @@ def _replace_text_segment(
 
 def _build_replacement_message(
     message: Message,
+    reply_message_id: int,
     matches_by_text: dict[str, list[re.Match[str]]],
     sender_id: str,
     nickname_to_qq: dict[str, str],
     collection_to_users: dict[str, list[str]],
     active_member_ids: set[str] | None = None,
 ) -> tuple[Message, bool]:
-    """构造昵称与集合替换后的消息。"""
-    new_msg = Message()
+    """构造引用原消息的昵称与集合替换消息。"""
+    new_msg = Message(MessageSegment.reply(reply_message_id))
     replaced = False
 
     for seg in message:
@@ -352,6 +353,7 @@ async def _retry_replacement_after_send_failure(
 
     retry_msg, retry_replaced = _build_replacement_message(
         event.message,
+        event.message_id,
         matches_by_text,
         sender_id,
         nickname_to_qq,
@@ -388,7 +390,12 @@ async def handle_replace_nickname(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     new_msg, replaced = _build_replacement_message(
-        event.message, matches_by_text, sender_id, nickname_to_qq, collection_to_users
+        event.message,
+        event.message_id,
+        matches_by_text,
+        sender_id,
+        nickname_to_qq,
+        collection_to_users,
     )
     if not replaced:
         return
