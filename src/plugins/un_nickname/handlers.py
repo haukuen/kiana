@@ -52,9 +52,14 @@ config: Config = get_plugin_config(Config)
 # ============== Rule 函数 ==============
 
 
+def _get_add_nickname_message(event: GroupMessageEvent) -> Message:
+    """引用命令使用适配器处理前的消息，以保留回复目标 @。"""
+    return event.original_message if event.reply is not None else event.message
+
+
 def is_adding_nickname(event: GroupMessageEvent) -> bool:
     """检查是否为添加昵称命令"""
-    msg = event.message
+    msg = _get_add_nickname_message(event)
     has_at = any(seg.type == "at" for seg in msg)
     text = msg.extract_plain_text().strip()
     return has_at and text.startswith("昵称")
@@ -187,7 +192,7 @@ async def _send_nickname_list(
 
 @add_nickname_matcher.handle()
 async def handle_add_nickname(bot: Bot, event: GroupMessageEvent) -> None:
-    msg = event.message
+    msg = _get_add_nickname_message(event)
     at_qq, nickname = extract_at_qq_and_nickname(msg)
 
     if not at_qq:
