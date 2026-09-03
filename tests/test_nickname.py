@@ -15,11 +15,13 @@ from nonebot.adapters.onebot.v11 import (
     MessageSegment,
 )
 from nonebot.adapters.onebot.v11.exception import ActionFailed
+from nonebot.adapters.onebot.v11.event import Reply
 from nonebug import App
 
 
-def _make_event(text: str) -> GroupMessageEvent:
-    """构造一条仅含纯文本的群消息事件"""
+def _make_event(content: str | Message) -> GroupMessageEvent:
+    """构造群消息事件"""
+    message = Message(content)
     return GroupMessageEvent(
         time=int(datetime.now().timestamp()),
         self_id=987654321,
@@ -29,9 +31,9 @@ def _make_event(text: str) -> GroupMessageEvent:
         message_type="group",
         group_id=222,
         message_id=1,
-        message=Message(text),
-        original_message=Message(text),
-        raw_message=text,
+        message=message,
+        original_message=message,
+        raw_message=str(message),
         font=0,
         sender={"user_id": 111, "nickname": "u", "card": "", "role": "member"},  # type: ignore[arg-type]
     )
@@ -45,6 +47,46 @@ def _action_failed() -> ActionFailed:
         message="Get Uid Error",
         wording="Get Uid Error",
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_add_nickname_keeps_replied_user_mention(app: App) -> None:
+    """适配器清理引用段后，昵称命令仍应使用原消息中的 @目标。"""
+    from src.plugins.un_nickname.db import fetch_user_nicknames
+    from src.plugins.un_nickname.handlers import add_nickname_matcher
+
+    original_message = Message(
+        [
+            MessageSegment.reply(9),
+            MessageSegment.at("999"),
+            MessageSegment.text(" 昵称 老张"),
+        ]
+    )
+    event = _make_event(original_message)
+    event.reply = Reply(
+        time=event.time,
+        message_type="group",
+        message_id=9,
+        real_id=9,
+        sender={"user_id": 999},
+        message=Message("原消息"),
+    )
+    event.message = Message("昵称 老张")
+
+    async with app.test_matcher(add_nickname_matcher) as ctx:
+        bot = ctx.create_bot(base=OneBotV11Bot, self_id="987654321")
+        ctx.should_call_api(
+            "get_group_member_info",
+            {"group_id": 222, "user_id": 987654321, "no_cache": True},
+            result={"shut_up_timestamp": 0},
+        )
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_send(
+            event, "昵称'老张'成功绑定到用户!", result={"message_id": 2}
+        )
+
+    assert await fetch_user_nicknames("222", "999") == ["老张"]
 
 
 # ============== AT_NICKNAME_PATTERN 单元测试 ==============
