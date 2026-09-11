@@ -1,22 +1,53 @@
 """随机礼物插件：协议编码、随机池与命令入口。"""
 
+import itertools
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
 from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
+# message_id 必须每个事件唯一：nonebot-plugin-alconna 会按 message_id 缓存转换后的
+# UniMessage，全用同一个 id 会让后一个用例拿到前一个用例的缓存，表现为随机的顺序依赖。
+_message_ids = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+def onebot11_uniseg_for_fake_adapter():
+    """让 nonebug 的假 adapter 用真实的 OneBot11 uniseg builder/exporter。
+
+    nonebug 的 ``SupportAdapter.nonebug`` 只实现了 text，at 段会被降级成 ``Other``，
+    于是 Alconna 的 ``At`` 参数在测试里永远匹配不上。这里换成真实的 OneBot11 实现，
+    跑的就是生产路径（同样是把 OneBot v11 的 Message 转成 uniseg）。
+
+    必须改 ``BUILDER_MAPPING`` 而不是 ``loaders``：后者是懒查表，前者在导入时就把
+    ``"fake"`` 预置成 nonebug 的实现了，改 loaders 不会生效。
+    """
+    from nonebot_plugin_alconna.uniseg.adapters import BUILDER_MAPPING, EXPORTER_MAPPING
+    from nonebot_plugin_alconna.uniseg.adapters.onebot11 import Loader as OneBot11Loader
+    from nonebot_plugin_alconna.uniseg.constraint import SupportAdapter
+
+    key = SupportAdapter.nonebug.value
+    loader = OneBot11Loader()
+    old_builder, old_exporter = BUILDER_MAPPING.get(key), EXPORTER_MAPPING.get(key)
+    BUILDER_MAPPING[key] = loader.get_builder()
+    EXPORTER_MAPPING[key] = loader.get_exporter()
+    yield
+    BUILDER_MAPPING[key] = old_builder  # type: ignore[assignment]
+    EXPORTER_MAPPING[key] = old_exporter  # type: ignore[assignment]
+
 
 def create_group_event(
-    message: str,
+    message: str | Message,
     group_id: int = 123456,
     user_id: int = 111111,
     nickname: str = "测试用户",
     card: str = "",
 ) -> GroupMessageEvent:
     """创建群消息事件"""
+    msg = message if isinstance(message, Message) else Message(message)
     return GroupMessageEvent(
         time=int(datetime.now().timestamp()),
         self_id=987654321,
@@ -25,10 +56,10 @@ def create_group_event(
         user_id=user_id,
         message_type="group",
         group_id=group_id,
-        message_id=1,
-        message=Message(message),
-        original_message=Message(message),
-        raw_message=message,
+        message_id=next(_message_ids),
+        message=msg,
+        original_message=msg,
+        raw_message=str(msg),
         font=0,
         sender=Sender(user_id=user_id, nickname=nickname, card=card, role="member"),
     )
@@ -40,6 +71,17 @@ def expect_bot_not_muted(ctx, group_id: int = 123456, self_id: int = 987654321) 
         "get_group_member_info",
         {"group_id": group_id, "user_id": self_id, "no_cache": True},
         result={"shut_up_timestamp": 0},
+    )
+
+
+def expect_member_name(
+    ctx, group_id: int = 123456, user_id: int = 222222, card: str = "", nickname: str = "李四"
+) -> None:
+    """声明被 @ 的人的成员信息查询"""
+    ctx.should_call_api(
+        "get_group_member_info",
+        {"group_id": group_id, "user_id": user_id},
+        result={"card": card, "nickname": nickname},
     )
 
 
@@ -154,63 +196,58 @@ def test_pick_gift_returns_none_for_empty_pool() -> None:
     assert pick_gift(["camping"]).key == "camping"
 
 
+# ==================== 命令词匹配 ====================
+
+
 @pytest.mark.asyncio
-async def test_bot_nickname_is_cached(app: App) -> None:
+@pytest.mark.parametrize("text", ["随机礼物", "送礼物"])
+async def test_gift_matcher_rule_matches(app: App, text: str) -> None:
     from src.plugins import gift as gift_plugin
-
-    bot = MagicMock()
-    bot.self_id = "987654321"
-    bot.get_login_info = AsyncMock(return_value={"nickname": "Amadeus"})
-
-    assert await gift_plugin._bot_nickname(bot) == "Amadeus"
-    assert await gift_plugin._bot_nickname(bot) == "Amadeus"
-    assert bot.get_login_info.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_bot_nickname_failure_is_not_cached(app: App) -> None:
-    """查询失败时回退默认昵称，且不把失败结果缓存下来。"""
-    from src.plugins import gift as gift_plugin
-
-    bot = MagicMock()
-    bot.self_id = "987654321"
-    bot.get_login_info = AsyncMock(side_effect=RuntimeError("boom"))
-
-    assert await gift_plugin._bot_nickname(bot) == "机器人"
-    assert await gift_plugin._bot_nickname(bot) == "机器人"
-    assert bot.get_login_info.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_gift_matcher_rule_matches(app: App) -> None:
-    from src.plugins.gift import random_gift
 
     async with app.test_api() as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
-        assert await random_gift.rule(bot, create_group_event("随机礼物"), {}) is True
+        assert await gift_plugin.gift_matcher.rule(bot, create_group_event(text), {}) is True
 
 
 @pytest.mark.asyncio
-async def test_gift_matcher_rule_not_matches(app: App) -> None:
-    from src.plugins.gift import random_gift
+@pytest.mark.parametrize("text", ["随机礼物", "送礼物"])
+@pytest.mark.parametrize("gap", ["", " "])
+async def test_gift_matcher_rule_matches_with_trailing_at(app: App, text: str, gap: str) -> None:
+    """回归：at 段不进纯文本，所以「送礼物 @某人」的纯文本是「送礼物 」带尾空格。
 
-    async with app.test_matcher(random_gift) as ctx:
+    曾经用 on_fullmatch，而 FullmatchRule 是精确相等匹配，带空格就完全匹配不上。
+    """
+    from src.plugins import gift as gift_plugin
+
+    async with app.test_api() as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
-        ctx.receive_event(bot, create_group_event("随机礼物给我"))
-        ctx.should_not_pass_rule()
+        event = create_group_event(Message(f"{text}{gap}") + MessageSegment.at(222222))
+        assert await gift_plugin.gift_matcher.rule(bot, event, {}) is True
 
 
 @pytest.mark.asyncio
-async def test_random_gift_sends_to_sender_without_reply(app: App, monkeypatch) -> None:
-    """命令触发者就是收礼人，礼物取自配置的池；命令本身不发任何消息。"""
+@pytest.mark.parametrize("text", ["送礼物给我", "礼物", "随机礼物 香槟", "送我礼物"])
+async def test_gift_matcher_rule_not_matches(app: App, text: str) -> None:
+    from src.plugins import gift as gift_plugin
+
+    async with app.test_api() as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        assert await gift_plugin.gift_matcher.rule(bot, create_group_event(text), {}) is False
+
+
+# ==================== 收礼人与署名 ====================
+
+
+@pytest.mark.asyncio
+async def test_gift_goes_to_command_sender_without_reply(app: App, monkeypatch) -> None:
+    """不带 @ 时收礼人就是发命令的人，且署名也是他（不是 bot）；命令不发任何消息。"""
     from src.plugins import gift as gift_plugin
 
     monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
-    monkeypatch.setattr(gift_plugin, "_bot_nickname", AsyncMock(return_value="Amadeus"))
     sent = AsyncMock()
     monkeypatch.setattr(gift_plugin, "send_gift", sent)
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
         event = create_group_event("随机礼物")
         expect_bot_not_muted(ctx)
@@ -222,29 +259,138 @@ async def test_random_gift_sends_to_sender_without_reply(app: App, monkeypatch) 
     kwargs = sent.await_args.kwargs
     assert kwargs["gift"].key == "camping"
     assert kwargs["target_qq"] == 111111
+    assert kwargs["sender_qq"] == 111111, "署名应该是发命令的人，不是 bot"
+    assert kwargs["sender_nickname"] == "测试用户"
     assert kwargs["group_id"] == 123456
-    assert kwargs["sender_qq"] == 987654321
-    assert kwargs["sender_nickname"] == "Amadeus"
 
 
 @pytest.mark.asyncio
-async def test_random_gift_uses_card_as_target_nickname(app: App, monkeypatch) -> None:
-    """群名片优先于昵称，用于礼物包里的 recvnickname。"""
+async def test_gift_goes_to_mentioned_member(app: App, monkeypatch) -> None:
+    """「送礼物@某人」把礼物送给被 @ 的人，收礼人昵称取自群名片。"""
     from src.plugins import gift as gift_plugin
 
     monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
-    monkeypatch.setattr(gift_plugin, "_bot_nickname", AsyncMock(return_value="Amadeus"))
     sent = AsyncMock()
     monkeypatch.setattr(gift_plugin, "send_gift", sent)
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
-        event = create_group_event("随机礼物", card="群名片")
+        event = create_group_event(Message("送礼物 ") + MessageSegment.at(222222))
+        expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        expect_member_name(ctx, card="群名片李四")
+
+    kwargs = sent.await_args.kwargs
+    assert kwargs["target_qq"] == 222222
+    assert kwargs["target_nickname"] == "群名片李四"
+    assert kwargs["sender_qq"] == 111111, "署名仍是发命令的人"
+    assert kwargs["sender_nickname"] == "测试用户"
+
+
+@pytest.mark.asyncio
+async def test_mentioned_member_without_card_falls_back_to_nickname(app: App, monkeypatch) -> None:
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        event = create_group_event(Message("送礼物") + MessageSegment.at(222222))
+        expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        expect_member_name(ctx, card="", nickname="李四")
+
+    assert sent.await_args.kwargs["target_nickname"] == "李四"
+
+
+@pytest.mark.asyncio
+async def test_member_lookup_failure_falls_back_to_qq(app: App, monkeypatch) -> None:
+    """取昵称失败不该让整次送礼泡汤，退回 QQ 号继续。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        event = create_group_event(Message("送礼物 ") + MessageSegment.at(222222))
+        expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+        ctx.should_call_api(
+            "get_group_member_info",
+            {"group_id": 123456, "user_id": 222222},
+            exception=RuntimeError("取成员信息失败"),
+        )
+
+    assert sent.await_args.kwargs["target_qq"] == 222222
+    assert sent.await_args.kwargs["target_nickname"] == "222222"
+
+
+@pytest.mark.asyncio
+async def test_mention_all_is_ignored(app: App, monkeypatch) -> None:
+    """@全体成员（qq=all）不是收礼人，退回发给自己，也不查成员信息。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        event = create_group_event(Message("送礼物 ") + MessageSegment.at("all"))
         expect_bot_not_muted(ctx)
         ctx.receive_event(bot, event)
         ctx.should_pass_rule()
 
-    assert sent.await_args.kwargs["target_nickname"] == "群名片"
+    assert sent.await_args.kwargs["target_qq"] == 111111
+
+
+@pytest.mark.asyncio
+async def test_mentioning_self_targets_self(app: App, monkeypatch) -> None:
+    """@ 自己等效于不 @，不用去查自己的成员信息。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        event = create_group_event(Message("送礼物 ") + MessageSegment.at(111111))
+        expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+
+    assert sent.await_args.kwargs["target_qq"] == 111111
+    assert sent.await_args.kwargs["target_nickname"] == "测试用户"
+
+
+@pytest.mark.asyncio
+async def test_sender_uses_group_card(app: App, monkeypatch) -> None:
+    """署名优先用群名片。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        event = create_group_event("送礼物", card="发言人名片")
+        expect_bot_not_muted(ctx)
+        ctx.receive_event(bot, event)
+        ctx.should_pass_rule()
+
+    assert sent.await_args.kwargs["sender_nickname"] == "发言人名片"
+
+
+# ==================== 冷却与失败 ====================
 
 
 @pytest.mark.asyncio
@@ -253,11 +399,10 @@ async def test_random_gift_empty_pool_sends_nothing(app: App, monkeypatch) -> No
     from src.plugins import gift as gift_plugin
 
     monkeypatch.setattr(gift_plugin.config, "gift_pool", ["不存在的礼物"])
-    monkeypatch.setattr(gift_plugin, "_bot_nickname", AsyncMock(return_value="Amadeus"))
     sent = AsyncMock()
     monkeypatch.setattr(gift_plugin, "send_gift", sent)
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
         event = create_group_event("随机礼物")
         expect_bot_not_muted(ctx)
@@ -268,47 +413,45 @@ async def test_random_gift_empty_pool_sends_nothing(app: App, monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_random_gift_cooldown_is_per_user(app: App, monkeypatch) -> None:
-    """同一用户冷却内被拦，同群其他人不受影响。"""
+async def test_cooldown_is_per_sender_not_per_target(app: App, monkeypatch) -> None:
+    """冷却按发命令的人算：同一个人换着 @ 别人也不能绕开。"""
     from src.plugins import gift as gift_plugin
 
     monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
-    monkeypatch.setattr(gift_plugin, "_bot_nickname", AsyncMock(return_value="Amadeus"))
     sent = AsyncMock()
     monkeypatch.setattr(gift_plugin, "send_gift", sent)
 
-    def fire(ctx, *, user_id: int = 111111, nickname: str = "测试用户") -> None:
+    async def fire(ctx, event_factory) -> None:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
         reset_mute_cache()
         expect_bot_not_muted(ctx)
-        ctx.receive_event(bot, create_group_event("随机礼物", user_id=user_id, nickname=nickname))
+        ctx.receive_event(bot, event_factory())
         ctx.should_pass_rule()
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
-        fire(ctx)
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        await fire(ctx, lambda: create_group_event("随机礼物"))
     assert sent.await_count == 1
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
-        fire(ctx)
-    assert sent.await_count == 1, "同一用户第二次触发应被冷却拦下"
+    # 同一个人，换成 @ 别人 —— 仍应被自己的冷却拦住
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        await fire(ctx, lambda: create_group_event(Message("送礼物 ") + MessageSegment.at(222222)))
+    assert sent.await_count == 1, "换收礼人不该绕开冷却"
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
-        fire(ctx, user_id=222222, nickname="另一个人")
-    assert sent.await_count == 2, "同群其他用户不应受该用户冷却影响"
+    # 换个人，不该受前一个人的冷却影响
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        await fire(ctx, lambda: create_group_event("随机礼物", user_id=222222, nickname="另一个人"))
+    assert sent.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_random_gift_failure_keeps_no_cooldown(app: App, monkeypatch) -> None:
+async def test_gift_failure_keeps_no_cooldown(app: App, monkeypatch) -> None:
     """送礼出错既不回消息，也不写冷却——一次抖动不该把用户锁 60 秒。"""
     from src.plugins import gift as gift_plugin
 
     monkeypatch.setattr(gift_plugin.config, "gift_pool", ["camping"])
-    monkeypatch.setattr(gift_plugin, "_bot_nickname", AsyncMock(return_value="Amadeus"))
-    monkeypatch.setattr(
-        gift_plugin, "send_gift", AsyncMock(side_effect=RuntimeError("socket 断了"))
-    )
+    monkeypatch.setattr(gift_plugin, "send_gift", AsyncMock(side_effect=RuntimeError("socket 断了")))
 
-    async with app.test_matcher(gift_plugin.random_gift) as ctx:
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
         bot = ctx.create_bot(base=Bot, self_id="987654321")
         event = create_group_event("随机礼物")
         expect_bot_not_muted(ctx)
@@ -316,6 +459,9 @@ async def test_random_gift_failure_keeps_no_cooldown(app: App, monkeypatch) -> N
         ctx.should_pass_rule()
 
     assert gift_plugin._cooldowns == {}
+
+
+# ==================== 发包兜底 ====================
 
 
 def _action_failed(retcode: int):
