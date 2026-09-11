@@ -74,4 +74,4 @@ gift_cooldown_time=60
 - 命令解析用 `on_alconna`（`nonebot-plugin-alconna`），参数是 `Args["target?", At | AtAll]`。**没用 `on_fullmatch`**：at 段不计入纯文本，`送礼物 @某人` 的纯文本是带尾空格的 `"送礼物 "`，而 `FullmatchRule` 是精确相等匹配，匹配不上。Alconna 直接吃 `At`/`AtAll` 组件，空格与否、`@全体成员` 的区分都由它处理。
   - 注意：nonebug 的假 adapter 只实现了 `text`，at 段会降级成 `Other`，所以 `At` 参数在测试里默认匹配不上。`tests/test_gift.py` 里有个夹具把 uniseg 的 builder/exporter 换成真实的 OneBot11 实现 —— 细节和坑写在 `AGENTS.md`。
 - 被 @ 的人的昵称要单独查 `get_group_member_info`（群名片 > 昵称 > QQ 号）。查失败只降级成 QQ 号，不会让整次送礼泡汤。
-- 私聊也会响应，此时数据包里的群号填 0。
+- **只响应群聊**。分群规则（`group_permission.check_group_permission`）本身对私聊一律放行，所以插件在规则层单独拦了一道：私聊里 @ 不了人、送礼也只能送给自己，没有意义。要放开的话去掉 `_gift_rule` 里的 `isinstance` 判断即可。

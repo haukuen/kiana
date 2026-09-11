@@ -5,7 +5,13 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
+from nonebot.adapters.onebot.v11 import (
+    Bot,
+    GroupMessageEvent,
+    Message,
+    MessageSegment,
+    PrivateMessageEvent,
+)
 from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
@@ -71,6 +77,29 @@ def expect_bot_not_muted(ctx, group_id: int = 123456, self_id: int = 987654321) 
         "get_group_member_info",
         {"group_id": group_id, "user_id": self_id, "no_cache": True},
         result={"shut_up_timestamp": 0},
+    )
+
+
+def create_private_event(
+    message: str | Message,
+    user_id: int = 111111,
+    nickname: str = "测试用户",
+) -> PrivateMessageEvent:
+    """创建私聊消息事件"""
+    msg = message if isinstance(message, Message) else Message(message)
+    return PrivateMessageEvent(
+        time=int(datetime.now().timestamp()),
+        self_id=987654321,
+        post_type="message",
+        sub_type="friend",
+        user_id=user_id,
+        message_type="private",
+        message_id=next(_message_ids),
+        message=msg,
+        original_message=msg,
+        raw_message=str(msg),
+        font=0,
+        sender=Sender(user_id=user_id, nickname=nickname),
     )
 
 
@@ -388,6 +417,59 @@ async def test_sender_uses_group_card(app: App, monkeypatch) -> None:
         ctx.should_pass_rule()
 
     assert sent.await_args.kwargs["sender_nickname"] == "发言人名片"
+
+
+# ==================== 作用范围：群聊 vs 私聊 ====================
+
+
+@pytest.mark.asyncio
+async def test_private_chat_is_ignored(app: App, monkeypatch) -> None:
+    """私聊不响应。
+
+    分群规则本身对私聊一律放行，所以插件在规则层单独拦了一道：私聊里 @ 不了人、
+    送礼也只能送给自己，这条命令在私聊没有意义。
+    """
+    from src.plugins import gift as gift_plugin
+
+    sent = AsyncMock()
+    monkeypatch.setattr(gift_plugin, "send_gift", sent)
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        ctx.receive_event(bot, create_private_event("随机礼物"))
+        ctx.should_not_pass_rule()
+
+    sent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_blacklisted_group_is_ignored(app: App, monkeypatch) -> None:
+    """分群黑名单对群生效 —— 说明这条命令不是靠"私聊兜底"才能用。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_group_mode", "blacklist")
+    monkeypatch.setattr(gift_plugin.config, "gift_group_blacklist", ["123456"])
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        reset_mute_cache()
+        ctx.receive_event(bot, create_group_event("随机礼物"))
+        ctx.should_not_pass_rule()
+
+
+@pytest.mark.asyncio
+async def test_whitelist_mode_ignores_other_groups(app: App, monkeypatch) -> None:
+    """白名单模式下，名单外的群也不响应。"""
+    from src.plugins import gift as gift_plugin
+
+    monkeypatch.setattr(gift_plugin.config, "gift_group_mode", "whitelist")
+    monkeypatch.setattr(gift_plugin.config, "gift_group_whitelist", ["999999"])
+
+    async with app.test_matcher(gift_plugin.gift_matcher) as ctx:
+        bot = ctx.create_bot(base=Bot, self_id="987654321")
+        reset_mute_cache()
+        ctx.receive_event(bot, create_group_event("随机礼物"))
+        ctx.should_not_pass_rule()
 
 
 # ==================== 冷却与失败 ====================

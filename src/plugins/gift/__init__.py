@@ -3,7 +3,7 @@
 import time
 
 from nonebot import get_plugin_config, logger
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, Event, GroupMessageEvent, MessageEvent
 from nonebot.plugin import PluginMetadata
 from nonebot_plugin_alconna import Alconna, Args, At, AtAll, Match, on_alconna
 
@@ -31,18 +31,30 @@ _group_rule = create_group_rule(
     prefix="gift_",
 )
 
+
+async def _gift_rule(event: Event) -> bool:
+    """只响应群聊。
+
+    分群规则本身对私聊一律放行，但私聊里 @ 不了人、送礼也只能送给自己，这条命令在
+    私聊没有意义，所以在这里单独拦掉。
+    """
+    if not isinstance(event, GroupMessageEvent):
+        return False
+    return await _group_rule(event)
+
+
 # 用 Alconna 而不是 on_fullmatch：at 段不计入纯文本，「送礼物 @某人」的纯文本是带尾空格的
 # 「送礼物 」，而 FullmatchRule 是精确相等匹配，会漏掉带空格的写法。Alconna 直接吃 At/AtAll
 # 组件，空格与否、@全体成员 的区分都由它处理。
 gift_matcher = on_alconna(
     Alconna("送礼物", Args["target?", At | AtAll]),
     aliases={"随机礼物"},
-    rule=_group_rule,
+    rule=_gift_rule,
     priority=5,
     block=True,
 )
 
-# 冷却记录: {(group_id, 发命令的人): 上次成功时间}，group_id 为 0 表示私聊
+# 冷却记录: {(群号, 发命令的人): 上次成功时间}
 _cooldowns: dict[tuple[int, int], float] = {}
 
 
@@ -77,8 +89,6 @@ def _mentioned_qq(target: Match[At | AtAll]) -> int | None:
 
 async def _member_name(bot: Bot, group_id: int, user_id: int) -> str:
     """被 @ 的人的显示名：群名片 > 昵称 > QQ 号。"""
-    if group_id == 0:
-        return str(user_id)
     try:
         info = await bot.get_group_member_info(group_id=group_id, user_id=user_id)
     except Exception as e:
@@ -97,12 +107,13 @@ async def _resolve_receiver(
 
 
 @gift_matcher.handle()
-async def _handle_gift(bot: Bot, event: MessageEvent, target: Match[At | AtAll]) -> None:
+async def _handle_gift(bot: Bot, event: GroupMessageEvent, target: Match[At | AtAll]) -> None:
     """命令全程静默：礼物本身在群里可见，不再额外发消息。
 
     冷却中、空池、发送失败都只记日志——对用户来说就是"什么都没发生"。
     """
-    group_id = event.group_id if isinstance(event, GroupMessageEvent) else 0
+    # 规则已经保证只到群消息，这里 event 一定是 GroupMessageEvent
+    group_id = event.group_id
     # 冷却按发命令的人算，不按收礼人：要限制的是"谁能刷"（花的是 bot 账号的金币），
     # 否则同一个人换着人 @ 就能绕开冷却。
     cooldown_key = (group_id, event.user_id)
