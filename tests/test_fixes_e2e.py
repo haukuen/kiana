@@ -22,6 +22,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import httpx2
+from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -78,15 +80,15 @@ def _expect_bot_not_muted(
     )
 
 
-def _fake_ai_response(content: str = "AI 生成的总结") -> httpx.Response:
-    return httpx.Response(
+def _fake_ai_response(content: str = "AI 生成的总结") -> httpx2.Response:
+    return httpx2.Response(
         200,
         json={
             "choices": [
                 {"message": {"role": "assistant", "content": content}},
             ],
         },
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
 
@@ -105,9 +107,6 @@ def _configure_refine_plugin_for_e2e(rp) -> None:
     rp.config.refine_group_mode = "all"
     rp.config.refine_group_whitelist = []
     rp.config.refine_group_blacklist = []
-    rp.config.refine_ai_base_url = "https://example.com/v1"
-    rp.config.refine_ai_api_key = "sk-test"
-    rp.config.refine_ai_model = "gpt-test"
     rp.config.refine_ai_timeout_seconds = 30.0
     rp.config.refine_ai_temperature = 0.3
     rp.config.refine_result_fresh_seconds = 86400
@@ -186,7 +185,7 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
     """bug#2: 集合炼化时所有成员的发言都被采到 prompt。
 
     场景:集合 3 成员各发 5 条,共 15 条,走「订阅 → 炼化」完整命令链路。
-    通过 mock httpx.AsyncClient.post 捕获 AI 请求体,反查 user prompt
+    通过共享 SDK 传输 mock 捕获 AI 请求体,反查 user prompt
     包含三个成员各自的发言。
 
     说明:15 条远小于 max_messages=200,即便旧实现(per-member 配额前的共享
@@ -244,13 +243,13 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
             result={"message_id": 201},
         )
 
-    # 4. 炼化命令 — patch httpx 捕获 prompt
+    # 4. 炼化命令 — 在 SDK 传输层捕获 prompt
     captured_prompt: list[str] = []
 
-    async def capture_post(url, headers=None, json=None, **kwargs):
-        if json and "messages" in json:
-            # messages[1] 是 user prompt,内含采集到的原文
-            captured_prompt.append(json["messages"][1]["content"])
+    def capture_handler(request):
+        body = json_lib.loads(request.content)
+        if "messages" in body:
+            captured_prompt.append(body["messages"][1]["content"])
         return _fake_ai_response("三人综合总结")
 
     lazy_event = _make_group_event(
@@ -262,10 +261,7 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
 
     fake_dt = _fake_dt()
     with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(side_effect=capture_post),
-        ),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(capture_handler)),
         patch.object(commands, "datetime") as mock_dt,
         patch("time.time", return_value=float(fixed_now)),
     ):

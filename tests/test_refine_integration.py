@@ -18,7 +18,10 @@ import time
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import json
+
+import httpx2
+from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -67,15 +70,15 @@ def _configure_refine_plugin(**overrides: object) -> None:
         setattr(rp.config, key, value)
 
 
-def _fake_ai_response(content: str = "AI 生成的总结") -> httpx.Response:
-    return httpx.Response(
+def _fake_ai_response(content: str = "AI 生成的总结") -> httpx2.Response:
+    return httpx2.Response(
         200,
         json={
             "choices": [
                 {"message": {"role": "assistant", "content": content}},
             ],
         },
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
 
@@ -105,9 +108,6 @@ def _reset_refine_config() -> None:
         refine_group_mode="all",
         refine_group_whitelist=[],
         refine_group_blacklist=[],
-        refine_ai_base_url="https://example.com/v1",
-        refine_ai_api_key="sk-test",
-        refine_ai_model="gpt-test",
         refine_ai_timeout_seconds=30.0,
         refine_ai_temperature=0.3,
         refine_result_fresh_seconds=86400,
@@ -263,7 +263,7 @@ async def test_message_archive_preprocessor_feeds_refine_pipeline(app: App) -> N
 async def test_ai_payload_contains_real_archived_text() -> None:
     """验证 AI 请求的 prompt_payload 真的包含采集到的原文。
 
-    通过捕获 httpx.post 的 json 参数，反查 messages[1].content 包含原文。
+    通过捕获 httpx2.post 的 json 参数，反查 messages[1].content 包含原文。
     """
     from src.plugins.message_archive.db import archive_message_event
     from src.plugins.refine.ai import request_refine_summary
@@ -302,16 +302,13 @@ async def test_ai_payload_contains_real_archived_text() -> None:
     # 验证 AI 调用收到正确 payload
     captured: dict = {}
 
-    async def _fake_post(self, url, *args, **kwargs):
-        captured["url"] = url
-        captured["json"] = kwargs.get("json")
+    def _handler(request):
+        captured["url"] = str(request.url)
+        captured["json"] = json.loads(request.content)
         return _fake_ai_response("ok")
 
-    with patch("httpx.AsyncClient.post", new=_fake_post):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(_handler)):
         result = await request_refine_summary(
-            base_url="https://example.com/v1",
-            api_key="sk-test",
-            model="gpt-test",
             timeout_seconds=30,
             temperature=0.3,
             prompt_payload=payload,
@@ -393,9 +390,7 @@ async def test_lazy_refine_full_pipeline(app: App) -> None:
 
     global_plugins._mute_cache.clear()
     with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(return_value=_fake_ai_response("集合总结内容")),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _fake_ai_response("集合总结内容")),
         ),
         patch.object(commands, "datetime") as mock_dt,
         patch("time.time", return_value=float(fixed_now)),
@@ -485,9 +480,7 @@ async def test_force_refine_overrides_fresh_cache(app: App) -> None:
         "强制炼化 目标", message_id=700, event_time=fixed_now
     )
     with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(return_value=_fake_ai_response("强制重炼的新总结")),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _fake_ai_response("强制重炼的新总结")),
         ),
         patch.object(commands, "datetime") as mock_dt,
         patch("time.time", return_value=float(fixed_now)),
@@ -1088,7 +1081,7 @@ async def test_lazy_handler_no_label(app: App) -> None:
 async def test_lazy_handler_config_missing(app: App) -> None:
     """refine_lazy handler body: AI 配置缺失 → 配置错误提示。
 
-    用一个存在的订阅走到 validate_ai_config,然后 patch config 缺 api_key。
+    用一个存在的订阅走到 validate_ai_config,然后清空 ai_provider 的 api_key。
     """
     from src.plugins.refine import commands
     from src.plugins.refine.db import add_subscription
@@ -1098,10 +1091,11 @@ async def test_lazy_handler_config_missing(app: App) -> None:
     )
     assert sub is not None
 
-    # 临时把 api_key 清空(本文件 autouse fixture 已配好,这里覆盖)
-    import src.plugins.refine as rp
-    saved = rp.config.refine_ai_api_key
-    rp.config.refine_ai_api_key = ""
+    # 端点与模型由 ai_provider 前置插件持有(conftest 的 autouse fixture 已配好),这里覆盖
+    from src.plugins.ai_provider.config import config as ai_config
+
+    saved = ai_config.ai_providers
+    ai_config.ai_providers = []
     try:
         event = _make_group_event("炼化 配置测", message_id=912)
         async with app.test_matcher(commands.refine_lazy) as ctx:
@@ -1113,11 +1107,11 @@ async def test_lazy_handler_config_missing(app: App) -> None:
             # 这里只校验前缀(完整文案可能与具体配置项有关)
             ctx.should_call_send(
                 event,
-                "❌ AI 配置缺失：refine_ai_api_key 未配置",
+                "❌ AI 配置缺失：ai_providers 未配置",
                 result={"message_id": 9120},
             )
     finally:
-        rp.config.refine_ai_api_key = saved
+        ai_config.ai_providers = saved
 
 
 @pytest.mark.asyncio

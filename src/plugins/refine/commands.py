@@ -364,7 +364,7 @@ async def _lazy(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
         return
 
     try:
-        validate_ai_config(config)
+        validate_ai_config()
     except RefineConfigError as e:
         await refine_lazy.finish(f"❌ AI 配置缺失：{e}")
         return
@@ -414,7 +414,7 @@ async def _force(event: GroupMessageEvent, args: Message = CommandArg()) -> None
         return
 
     try:
-        validate_ai_config(config)
+        validate_ai_config()
     except RefineConfigError as e:
         await refine_force.finish(f"❌ AI 配置缺失：{e}")
         return

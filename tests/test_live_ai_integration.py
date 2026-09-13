@@ -5,10 +5,8 @@
     LIVE_AI_BASE_URL=... LIVE_AI_API_KEY=... LIVE_AI_MODEL=... \\
         uv run pytest -m live_ai tests/test_live_ai_integration.py -v
 
-或复用 refine / word_pulse 生产配置的同一套凭据::
-
-    REFINE_AI_BASE_URL=... REFINE_AI_API_KEY=... REFINE_AI_MODEL=... \\
-        uv run pytest -m live_ai tests/test_live_ai_integration.py -v
+炼化测试使用 NoneBot 当前环境的 ai_provider 档案和 refine 模型路由。
+词频测试仍使用下面的 ai_creds fixture。
 
 验证项:
 
@@ -60,23 +58,36 @@ def ai_creds() -> tuple[str, str, str]:
     return creds
 
 
+@pytest.fixture
+def refine_ai_config(monkeypatch: pytest.MonkeyPatch, reset_ai_endpoint: None) -> None:
+    """恢复真实供应商档案，按炼化自己的路由检查配置。"""
+    from nonebot import get_plugin_config
+
+    from src.plugins.ai_provider.config import Config, config as ai_config
+    from src.plugins.ai_provider.service import reset_auto_cache
+    from src.plugins.refine.runner import missing_ai_config
+
+    settings = get_plugin_config(Config)
+    for name in Config.model_fields:
+        monkeypatch.setattr(ai_config, name, getattr(settings, name))
+    reset_auto_cache()
+    if missing := missing_ai_config():
+        pytest.skip(f"炼化 AI 配置不完整：{missing[0]}")
+
+
 # ── 测试 1: refine 基线 ──────────────────────────────────────────────
 
 
 @pytest.mark.live_ai
 @pytest.mark.asyncio
-async def test_refine_summary_real_api(ai_creds: tuple[str, str, str]) -> None:
+async def test_refine_summary_real_api(refine_ai_config: None) -> None:
     """验证 refine 的 ``request_refine_summary`` 对真实 API 可用(基线测试)。
 
     如果这个失败,说明 API 凭据/网络有问题,其他 live_ai 测试都不可信。
     """
-    base_url, api_key, model = ai_creds
     from src.plugins.refine.ai import request_refine_summary
 
     summary = await request_refine_summary(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         timeout_seconds=60.0,
         temperature=0.3,
         prompt_payload=(
@@ -241,14 +252,13 @@ async def test_word_pulse_summarize_real_api(
 @pytest.mark.live_ai
 @pytest.mark.asyncio
 async def test_refine_multi_member_summary_covers_all_members(
-    ai_creds: tuple[str, str, str],
+    refine_ai_config: None,
 ) -> None:
     """验证 bug#2 prompt 措辞:多人 prompt 真实能生成"综合多人"的总结。
 
     如果 AI 只总结了一个人的观点,说明 prompt 措辞需要加强
     (虽然 bug#2 主因是采样,但 prompt 也值得验证)。
     """
-    base_url, api_key, model = ai_creds
     from src.plugins.refine.ai import request_refine_summary
 
     prompt_payload = (
@@ -260,9 +270,6 @@ async def test_refine_multi_member_summary_covers_all_members(
     )
 
     summary = await request_refine_summary(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         timeout_seconds=60.0,
         temperature=0.3,
         prompt_payload=prompt_payload,

@@ -23,27 +23,20 @@ driver = get_driver()
 
 @driver.on_startup
 async def _init_refine() -> None:
-    """启动时仅建表 + 检查 AI 配置（缺失仅警告）。
+    """启动时仅建表 + 检查 AI 端点配置（缺失仅警告）。
 
     v2 不再注册任何 cron job —— 提炼完全由用户命令懒触发；过期清理通过
     ``refine_result`` 表与订阅 1:1 + INSERT OR REPLACE 自动处理。
     """
     from .db import ensure_schema  # noqa: PLC0415
+    from .runner import missing_ai_config  # noqa: PLC0415
 
     ensure_schema()
 
-    missing: list[str] = []
-    if config.refine_plugin_enabled:
-        if not config.refine_ai_base_url.strip():
-            missing.append("refine_ai_base_url")
-        if not config.refine_ai_api_key.strip():
-            missing.append("refine_ai_api_key")
-        if not config.refine_ai_model.strip():
-            missing.append("refine_ai_model")
+    missing = missing_ai_config() if config.refine_plugin_enabled else []
     if missing:
         logger.warning(
-            f"[refine] 配置缺失: {', '.join(missing)}。"
-            "炼化命令不可用，订阅管理命令仍可用。"
+            f"[refine] 配置缺失: {', '.join(missing)}。炼化命令不可用，订阅管理命令仍可用。"
         )
 
 
