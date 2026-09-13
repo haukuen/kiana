@@ -15,7 +15,7 @@
 - 用 ``app.test_matcher()`` 触发完整事件路由
 - 用 ``should_call_send`` 断言回包
 - 用 monkeypatch 启用插件 + 配置 AI
-- mock ``httpx.AsyncClient.post`` 而非业务逻辑
+- mock SDK 传输层（见 tests.ai_mock_transport）而非业务逻辑
 
 不修改任何源代码。
 """
@@ -26,7 +26,8 @@ import json
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
+from tests.ai_mock_transport import AIHttpMock, AI_HTTP_TARGET
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -109,23 +110,21 @@ def _expect_bot_not_muted(
 
 
 def _enable_word_pulse(monkeypatch) -> None:
-    """启用 word_pulse 插件 + 配置 AI。"""
+    """启用词频；AI 档案由 conftest 统一配置。"""
     from src.plugins import word_pulse
     monkeypatch.setattr(word_pulse.config, "word_pulse_plugin_enabled", True)
-    monkeypatch.setattr(word_pulse.config, "word_pulse_base_url", "https://example.com/v1")
-    monkeypatch.setattr(word_pulse.config, "word_pulse_api_key", "sk-test")
-    monkeypatch.setattr(word_pulse.config, "word_pulse_model", "gpt-test")
 
 
-def _fake_ai_response(content: str = "AI ok") -> httpx.Response:
-    return httpx.Response(
+
+def _fake_ai_response(content: str = "AI ok") -> httpx2.Response:
+    return httpx2.Response(
         200,
         json={"choices": [{"message": {"role": "assistant", "content": content}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
 
-def _fake_charset_response() -> httpx.Response:
+def _fake_charset_response() -> httpx2.Response:
     """expand_charsets 期望 {charsets: [{cluster, chars[5-30]}]}。"""
     return _fake_ai_response(json.dumps({
         "charsets": [{"cluster": "茅台", "chars": ["茅", "台", "酒", "股", "票"] * 2}]
@@ -164,7 +163,7 @@ async def test_admin_accepts_admin_role_for_add_success(app: App, monkeypatch) -
     word_pulse.result_cache.clear()
 
     event = _make_group_event("词频 add 炒股 茅台", message_id=2, role="admin")
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=_fake_charset_response())):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _fake_charset_response())):
         async with app.test_matcher(word_pulse.admin_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
@@ -215,9 +214,9 @@ async def test_handle_add_returns_degraded_message_when_ai_fails(app: App, monke
     word_pulse.result_cache.clear()
 
     event = _make_group_event("词频 add 炒股 茅台", message_id=4, role="admin")
-    # mock httpx.post 抛 HTTPStatusError(401) → WordPulseAIAuthError → 降级
-    err_resp = httpx.Response(401, request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=httpx.HTTPStatusError("e", request=err_resp.request, response=err_resp))):
+    # mock httpx2.post 抛 HTTPStatusError(401) → WordPulseAIAuthError → 降级
+    err_resp = httpx2.Response(401, request=httpx2.Request("POST", "https://example.com/v1/chat/completions"))
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: err_resp)):
         async with app.test_matcher(word_pulse.admin_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
@@ -273,7 +272,7 @@ async def test_handle_append_success(app: App, monkeypatch) -> None:
     await replace_clusters(tid, ["茅台"])
 
     event = _make_group_event("词频 append 炒股 五粮液", message_id=6, role="admin")
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=_fake_charset_response())):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _fake_charset_response())):
         async with app.test_matcher(word_pulse.admin_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
@@ -499,8 +498,8 @@ async def test_handle_refresh_ai_failure(app: App, monkeypatch) -> None:
     await replace_clusters(tid, ["茅台"])
 
     event = _make_group_event("词频 refresh 炒股", message_id=15, role="admin")
-    err_resp = httpx.Response(500, request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=httpx.HTTPStatusError("e", request=err_resp.request, response=err_resp))):
+    err_resp = httpx2.Response(500, request=httpx2.Request("POST", "https://example.com/v1/chat/completions"))
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: err_resp)):
         async with app.test_matcher(word_pulse.admin_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
@@ -522,7 +521,7 @@ async def test_handle_refresh_success(app: App, monkeypatch) -> None:
     await replace_clusters(tid, ["茅台"])
 
     event = _make_group_event("词频 refresh 炒股", message_id=16, role="admin")
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=_fake_charset_response())):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _fake_charset_response())):
         async with app.test_matcher(word_pulse.admin_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
@@ -790,9 +789,8 @@ async def test_query_config_missing_returns_error(app: App, monkeypatch) -> None
     """配置缺失 → 提示配置错误。"""
     from src.plugins import word_pulse
     monkeypatch.setattr(word_pulse.config, "word_pulse_plugin_enabled", True)
-    monkeypatch.setattr(word_pulse.config, "word_pulse_base_url", "")
-    monkeypatch.setattr(word_pulse.config, "word_pulse_api_key", "")
-    monkeypatch.setattr(word_pulse.config, "word_pulse_model", "")
+    from src.plugins.ai_provider.config import config as ai_config
+    monkeypatch.setattr(ai_config, "ai_providers", [])
     word_pulse.cooldown_dict.clear()
     word_pulse.result_cache.clear()
 
@@ -802,7 +800,7 @@ async def test_query_config_missing_returns_error(app: App, monkeypatch) -> None
         _expect_bot_not_muted(ctx)
         ctx.receive_event(bot, event)
         ctx.should_pass_rule()
-        ctx.should_call_send(event, "词频插件未配置 base_url", result={"message_id": 126})
+        ctx.should_call_send(event, "词频插件 AI 配置不完整：ai_providers 未配置", result={"message_id": 126})
 
 
 @pytest.mark.asyncio
@@ -1024,10 +1022,14 @@ async def test_query_full_pipeline_success(app: App, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_ai_timeout_returns_friendly(app: App, monkeypatch) -> None:
-    """AI 超时 → 返回「AI 总结超时」(走 _run_summary 异常分支)。"""
+@pytest.mark.parametrize("error_name, expected", [
+    ("WordPulseAITimeoutError", "AI 总结超时，请稍后重试"),
+    ("WordPulseAIConfigError", "词频插件 AI 配置不完整：配置变更"),
+])
+async def test_query_ai_error_returns_friendly(app: App, monkeypatch, error_name, expected) -> None:
+    """总结阶段的超时与配置错误均返回明确提示。"""
     from src.plugins import word_pulse
-    from src.plugins.word_pulse.ai import WordPulseAITimeoutError
+    from src.plugins.word_pulse import ai
     from src.plugins.word_pulse.db import replace_clusters, save_bucket, upsert_theme
     _enable_word_pulse(monkeypatch)
     word_pulse.cooldown_dict.clear()
@@ -1047,11 +1049,11 @@ async def test_query_ai_timeout_returns_friendly(app: App, monkeypatch) -> None:
     event = _make_group_event("总结 1天 炒股", message_id=34, role="member")
     with (
         patch("src.plugins.word_pulse.compute_or_load_buckets", new=AsyncMock(side_effect=fake_compute)),
-        patch("src.plugins.word_pulse.summarize", new=AsyncMock(side_effect=WordPulseAITimeoutError("timeout"))),
+        patch("src.plugins.word_pulse.summarize", new=AsyncMock(side_effect=getattr(ai, error_name)("配置变更"))),
     ):
         async with app.test_matcher(word_pulse.query_matcher) as ctx:
             bot = ctx.create_bot(base=Bot, self_id="987654321")
             _expect_bot_not_muted(ctx)
             ctx.receive_event(bot, event)
             ctx.should_pass_rule()
-            ctx.should_call_send(event, "AI 总结超时，请稍后重试", result={"message_id": 133})
+            ctx.should_call_send(event, expected, result={"message_id": 133})

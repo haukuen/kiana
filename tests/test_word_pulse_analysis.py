@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
+from tests.ai_mock_transport import AIHttpMock, AI_HTTP_TARGET
 import pytest
 from nonebug import App
 
@@ -74,14 +75,13 @@ async def test_classify_batch_prompt_includes_aliases(app: App) -> None:
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
-            base_url="x", api_key="x", model="x",
             messages=[(1, "今天茅子涨疯了")],
             clusters=[{"name": "茅台", "aliases": ["茅子", "飞天"]}],
             theme_name="炒股",
         )
 
     assert len(captured_messages) == 1
-    user_msg = captured_messages[0][1]["content"]  # system=0, user=1
+    user_msg = captured_messages[0][0]["content"]
     # cluster 描述里必须出现"茅子""飞天"作为"茅台"的别名
     assert "茅子" in user_msg
     assert "飞天" in user_msg
@@ -101,13 +101,12 @@ async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) 
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
-            base_url="x", api_key="x", model="x",
             messages=[(1, "闲聊")],
             clusters=[{"name": "茅台", "aliases": []}],
             theme_name="炒股",
         )
 
-    user_msg = captured_messages[0][1]["content"]
+    user_msg = captured_messages[0][0]["content"]
     assert "别名" not in user_msg
 
 
@@ -118,7 +117,7 @@ async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) 
 async def test_request_llm_uses_json_object_not_strict(app: App) -> None:
     """bug#3 回归：_request_llm 直接发 response_format=json_object，不走 strict→fallback。
 
-    通过 httpx.MockTransport 捕获实际请求体，断言：
+    通过 httpx2.MockTransport 捕获实际请求体，断言：
     1. response_format 是 {"type": "json_object"}（不是 strict json_schema）
     2. 只发一次请求（无降级重试）
     """
@@ -126,27 +125,16 @@ async def test_request_llm_uses_json_object_not_strict(app: App) -> None:
 
     captured_bodies: list[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content.decode("utf-8"))
         captured_bodies.append(body)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={"choices": [{"message": {"content": '{"results": []}'}}]},
         )
 
-    transport = httpx.MockTransport(handler)
-
-    # patch httpx.AsyncClient 以注入 MockTransport（trust_env 仍保留）
-    real_async_client = httpx.AsyncClient
-
-    class _PatchedClient(real_async_client):
-        def __init__(self, *args, **kwargs):
-            kwargs["transport"] = transport
-            super().__init__(*args, **kwargs)
-
-    with patch("src.plugins.word_pulse.ai.httpx.AsyncClient", _PatchedClient):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(handler)):
         result = await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
             messages=[{"role": "user", "content": "hi"}],
             temperature=0.0, timeout_seconds=10.0,
         )

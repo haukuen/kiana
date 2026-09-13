@@ -5,7 +5,7 @@
 2. **bug#1 对照**:`炼化 <不存在标签>`(有空格)正常进入 handler 并回「未找到标签」
 3. **bug#2**:集合订阅炼化时,所有成员的发言都被采到 prompt 里(per-member 配额)
 4. **bug#3**:word_pulse 的 AI 调用走 `response_format: {type: "json_object"}`,
-   不带 strict json_schema(通过 mock httpx 捕获请求体验证)
+   不带 strict json_schema(通过共享 SDK 传输 mock 捕获请求体验证)
 5. **help**:`词频 帮助` 与 `词频 help` 都能触发并返回完整帮助文案
 
 复用 conftest.py 的 `App` fixture 与 autouse 的 `reset_*` 表清理 fixture。
@@ -21,7 +21,6 @@ import json as json_lib
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
@@ -311,7 +310,7 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
     修复背景:原 strict json_schema + json_object 两级降级对部分上游 OpenAI
     兼容网关不兼容(strict 首次即 400),修复为单一 json_object + pydantic 校验。
 
-    验证:patch httpx.AsyncClient.post 捕获请求体,断言:
+    验证:通过共享 SDK 传输 mock 捕获请求体,断言:
     - response_format == {"type": "json_object"}
     - 不带 strict 字段
     - response_format 内不含 json_schema 字段
@@ -322,9 +321,9 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
 
     captured_body: dict = {}
 
-    async def mock_post(url, headers=None, json=None, **kwargs):
-        captured_body.update(json or {})
-        return httpx.Response(
+    def word_pulse_handler(request: httpx2.Request) -> httpx2.Response:
+        captured_body.update(json_lib.loads(request.content))
+        return httpx2.Response(
             200,
             json={
                 "choices": [
@@ -345,14 +344,10 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
                     }
                 ]
             },
-            request=httpx.Request("POST", url),
         )
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=mock_post)):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(word_pulse_handler)):
         result = await expand_charsets(
-            base_url="https://example.com/v1",
-            api_key="sk-test",
-            model="gpt-test",
             seeds=["测试种子"],
             theme="测试主题",
         )

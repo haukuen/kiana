@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
-import re
 
-import httpx
-from nonebot import logger
+from nonebot import logger, require
 from pydantic import BaseModel, Field, ValidationError
+
+_ai = require("src.plugins.ai_provider")
+
+CALLER = "word_pulse"
 
 
 class WordPulseAIError(Exception):
     """AI 分析失败基类。"""
+
+
+class WordPulseAIConfigError(WordPulseAIError):
+    """AI 配置或请求参数不合法。"""
 
 
 class WordPulseAITimeoutError(WordPulseAIError):
@@ -26,6 +32,15 @@ class WordPulseAIServiceError(WordPulseAIError):
 
 class WordPulseAIResponseError(WordPulseAIError):
     """AI 返回格式异常。"""
+
+
+_AI_ERRORS = _ai.AIErrorTypes(
+    timeout=WordPulseAITimeoutError,
+    auth=WordPulseAIAuthError,
+    service=WordPulseAIServiceError,
+    response=WordPulseAIResponseError,
+    config=WordPulseAIConfigError,
+)
 
 
 class CharsetItem(BaseModel):
@@ -71,90 +86,31 @@ class SummaryResult(BaseModel):
     unclassified_high_freq: list[UnclassifiedTerm] = Field(max_length=8)
 
 
-# ── Shared HTTP helper ──
-
-
-def _build_url(base_url: str) -> str:
-    return f"{base_url.rstrip('/')}/chat/completions"
-
-
-def _extract_content(payload: dict) -> str:
-    """从 OpenAI 兼容响应里取出 message.content 字符串。"""
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise WordPulseAIResponseError("响应中缺少 choices")
-    msg = choices[0].get("message")
-    if not isinstance(msg, dict):
-        raise WordPulseAIResponseError("响应中缺少 message")
-    content = msg.get("content")
-    if not isinstance(content, str):
-        raise WordPulseAIResponseError("响应中缺少 content")
-    return content
-
-
 async def _request_llm(
-    *, base_url: str, api_key: str, model: str,
-    messages: list[dict], temperature: float, timeout_seconds: float,
+    *,
+    system: str = "",
+    messages: list[dict[str, str]],
+    temperature: float,
+    timeout_seconds: float,
 ) -> dict:
-    """发送 OpenAI 兼容请求并返回解析后的 JSON dict。
+    """通过前置插件请求 JSON mode，业务 schema 仍由调用方校验。
 
-    直接使用 ``response_format: {type: "json_object"}``，由 pydantic 在调用方
-    做二次 schema 校验。原 strict json_schema + json_object 两级降级已删除，因为
-    部分上游 OpenAI 兼容网关对 strict json_schema 支持不完整（首次即 400），降级
-    到 json_object 后某些网关/模型同样不支持 —— bug#3。
+    部分兼容接口不支持严格 schema，因此保留 json_object 与围栏容错。
     """
-    url = _build_url(base_url)
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    body: dict = {
-        "model": model,
-        "temperature": temperature,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-    }
+    result = await _ai.complete(
+        caller=CALLER,
+        system=system,
+        messages=messages,
+        json_object=True,
+        temperature=temperature,
+        timeout_seconds=timeout_seconds,
+        errors=_AI_ERRORS,
+    )
+    logger.debug(f"[词频统计] AI 原始输出: {result.text}")
     try:
-        async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
-            resp = await client.post(url, headers=headers, json=body)
-            resp.raise_for_status()
-    except httpx.TimeoutException as e:
-        raise WordPulseAITimeoutError("AI 请求超时") from e
-    except httpx.HTTPStatusError as e:
-        raise _to_ai_error(e) from e
-    except httpx.RequestError as e:
-        raise WordPulseAIServiceError(f"AI 请求失败: {type(e).__name__}: {e}") from e
-
-    try:
-        payload = resp.json()
-    except json.JSONDecodeError as e:
-        raise WordPulseAIResponseError("AI 接口返回不是合法 JSON") from e
-    if not isinstance(payload, dict):
-        raise WordPulseAIResponseError("AI 接口响应格式不正确")
-    content = _extract_content(payload)
-    logger.debug(f"[词频统计] AI 原始输出: {content}")
-    try:
-        return json.loads(extract_json_text(content))
+        return json.loads(_ai.extract_json_text(result.text, errors=_AI_ERRORS))
     except json.JSONDecodeError as e:
         raise WordPulseAIResponseError("模型输出不是合法 JSON") from e
-
-
-def extract_json_text(content: str) -> str:
-    """剥离 markdown 围栏并截取 ``{...}`` 区间。"""
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
-        stripped = re.sub(r"\s*```$", "", stripped)
-
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or start > end:
-        raise WordPulseAIResponseError("模型输出中没有 JSON 对象")
-    return stripped[start : end + 1]
-
-
-def _to_ai_error(e: httpx.HTTPStatusError) -> WordPulseAIError:
-    """把 HTTPStatusError 按状态码映射到对应的 WordPulseAI* 异常。"""
-    if e.response.status_code in {401, 403}:
-        return WordPulseAIAuthError("AI 鉴权失败")
-    return WordPulseAIServiceError(f"AI 服务返回 HTTP {e.response.status_code}")
 
 
 # ── Call 1: Charset expansion ──
@@ -171,15 +127,23 @@ _CHARSET_SYSTEM = (
 
 
 async def expand_charsets(
-    *, base_url: str, api_key: str, model: str,
-    seeds: list[str], theme: str, temperature: float = 0.0, timeout: float = 60.0,
+    *,
+    seeds: list[str],
+    theme: str,
+    temperature: float = 0.0,
+    timeout: float = 60.0,
 ) -> dict[str, list[str]]:
     cluster_lines = "\n".join(f"- {s}" for s in seeds)
     parsed = await _request_llm(
-        base_url=base_url, api_key=api_key, model=model,
-        messages=[{"role": "system", "content": _CHARSET_SYSTEM},
-                  {"role": "user", "content": f"主题：{theme}\n子类种子词：\n{cluster_lines}\n\n请为每个子类列出 5-30 个语义相关的中文字符。"}],
-        temperature=temperature, timeout_seconds=timeout,
+        system=_CHARSET_SYSTEM,
+        messages=[
+            {
+                "role": "user",
+                "content": f"主题：{theme}\n子类种子词：\n{cluster_lines}\n\n请为每个子类列出 5-30 个语义相关的中文字符。",
+            },
+        ],
+        temperature=temperature,
+        timeout_seconds=timeout,
     )
     try:
         validated = CharsetExpansionResponse.model_validate(parsed)
@@ -203,25 +167,34 @@ _BATCH_SYSTEM = (
 
 
 async def classify_batch(
-    *, base_url: str, api_key: str, model: str,
-    messages: list[tuple[int, str]], clusters: list[dict], theme_name: str,
-    temperature: float = 0.0, timeout: float = 60.0, max_batch_size: int = 1000,
+    *,
+    messages: list[tuple[int, str]],
+    clusters: list[dict],
+    theme_name: str,
+    temperature: float = 0.0,
+    timeout: float = 60.0,
+    max_batch_size: int = 1000,
 ) -> list[tuple[int, str | None]]:
     if not messages:
         return []
     cluster_lines = "\n".join(
-        f"- {c['name']}" + (f" (别名: {', '.join(c['aliases'])})" if c.get('aliases') else "")
+        f"- {c['name']}" + (f" (别名: {', '.join(c['aliases'])})" if c.get("aliases") else "")
         for c in clusters
     )
     all_results: list[tuple[int, str | None]] = []
     for start in range(0, len(messages), max_batch_size):
-        chunk = messages[start:start + max_batch_size]
+        chunk = messages[start : start + max_batch_size]
         msg_lines = "\n".join(f"[{mid}] {txt}" for mid, txt in chunk)
         parsed = await _request_llm(
-            base_url=base_url, api_key=api_key, model=model,
-            messages=[{"role": "system", "content": _BATCH_SYSTEM},
-                      {"role": "user", "content": f"主题：{theme_name}\n子类：\n{cluster_lines}\n\n消息：\n{msg_lines}"}],
-            temperature=temperature, timeout_seconds=timeout,
+            system=_BATCH_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"主题：{theme_name}\n子类：\n{cluster_lines}\n\n消息：\n{msg_lines}",
+                },
+            ],
+            temperature=temperature,
+            timeout_seconds=timeout,
         )
         try:
             validated = BatchClassificationResponse.model_validate(parsed)
@@ -247,13 +220,18 @@ _SUMMARY_SYSTEM = (
 
 
 async def summarize(
-    *, base_url: str, api_key: str, model: str,
-    prompt: str, temperature: float = 0.3, timeout: float = 60.0,
+    *,
+    prompt: str,
+    temperature: float = 0.3,
+    timeout: float = 60.0,
 ) -> SummaryResult:
     parsed = await _request_llm(
-        base_url=base_url, api_key=api_key, model=model,
-        messages=[{"role": "system", "content": _SUMMARY_SYSTEM}, {"role": "user", "content": prompt}],
-        temperature=temperature, timeout_seconds=timeout,
+        system=_SUMMARY_SYSTEM,
+        messages=[
+            {"role": "user", "content": prompt},
+        ],
+        temperature=temperature,
+        timeout_seconds=timeout,
     )
     try:
         return SummaryResult.model_validate(parsed)

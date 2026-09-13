@@ -145,7 +145,7 @@ async def _compute_day_bucket(
     *, group_id: str, theme_id: int, theme_name: str, day: str, day_dt: datetime,
     clusters: list[dict], char_pool: set[str], cluster_terms: dict[str, set[str]],
     max_messages_per_bucket: int, max_sample_per_cluster: int,
-    base_url: str, api_key: str, model: str, temperature: float, timeout: float,
+    temperature: float, timeout: float,
 ) -> dict:
     day_start = int(datetime.combine(day_dt.date(), time.min, SHANGHAI_TZ).timestamp())
     messages = await fetch_group_messages_by_time_range(
@@ -178,7 +178,7 @@ async def _compute_day_bucket(
     grey_classified: list[tuple[int, str | None]] = []
     if grey_msgs:
         grey_classified = await classify_batch(
-            base_url=base_url, api_key=api_key, model=model, messages=grey_msgs,
+            messages=grey_msgs,
             clusters=clusters, theme_name=theme_name, temperature=temperature, timeout=timeout,
         )
 
@@ -194,7 +194,7 @@ async def _compute_day_bucket(
 async def compute_or_load_buckets(
     *, group_id: str, theme_id: int, theme_name: str,
     clusters: list[dict], char_pool: set[str], cluster_terms: dict[str, set[str]],
-    day_range: int, base_url: str, api_key: str, model: str,
+    day_range: int,
     max_messages_per_bucket: int, max_sample_per_cluster: int,
     temperature: float, timeout: float,
     today_bucket_fresh_seconds: int = 300,
@@ -220,7 +220,7 @@ async def compute_or_load_buckets(
             group_id=group_id, theme_id=theme_id, theme_name=theme_name, day=day, day_dt=day_dt,
             clusters=clusters, char_pool=char_pool, cluster_terms=cluster_terms,
             max_messages_per_bucket=max_messages_per_bucket, max_sample_per_cluster=max_sample_per_cluster,
-            base_url=base_url, api_key=api_key, model=model, temperature=temperature, timeout=timeout,
+            temperature=temperature, timeout=timeout,
         )
         results.append(bucket)
     results.reverse()

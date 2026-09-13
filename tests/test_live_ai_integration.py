@@ -1,78 +1,44 @@
 """真实 AI API 集成测试。
 
-默认 skip,运行方式::
+默认跳过，显式运行：
+    uv run pytest -m live_ai tests/test_live_ai_integration.py -v
 
-    LIVE_AI_BASE_URL=... LIVE_AI_API_KEY=... LIVE_AI_MODEL=... \\
-        uv run pytest -m live_ai tests/test_live_ai_integration.py -v
-
-炼化测试使用 NoneBot 当前环境的 ai_provider 档案和 refine 模型路由。
-词频测试仍使用下面的 ai_creds fixture。
-
-验证项:
-
-1. refine 的 ``request_refine_summary`` 真实可用(基线)
-2. word_pulse 的 ``_request_llm`` 用 ``response_format=json_object`` 真实可用(验证 bug#3 修复)
-3. word_pulse 的 ``expand_charsets`` 真实可用,且返回符合 pydantic schema(验证字符集扩展能成功)
-4. word_pulse 的 ``classify_batch`` 真实可用
-5. word_pulse 的 ``summarize`` 真实可用,且返回符合 ``SummaryResult`` schema
-6. refine 多人 prompt 真实能生成"综合多人"的总结(验证 bug#2 prompt 措辞是否足够)
+配置由 NoneBot 按当前环境加载：炼化和词频都复用 ai_provider 的供应商档案与各自 caller 的模型路由。
+这里只用合成文本验证真实接口，不另设测试凭据或改写供应商协议。
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 
-def _get_credentials() -> tuple[str, str, str] | None:
-    """优先用 ``LIVE_AI_*``,fallback 到 ``REFINE_AI_*`` 和 ``WORD_PULSE_*``。"""
-    base_url = (
-        os.environ.get("LIVE_AI_BASE_URL")
-        or os.environ.get("REFINE_AI_BASE_URL")
-        or os.environ.get("WORD_PULSE_BASE_URL")
-    )
-    api_key = (
-        os.environ.get("LIVE_AI_API_KEY")
-        or os.environ.get("REFINE_AI_API_KEY")
-        or os.environ.get("WORD_PULSE_API_KEY")
-    )
-    model = (
-        os.environ.get("LIVE_AI_MODEL")
-        or os.environ.get("REFINE_AI_MODEL")
-        or os.environ.get("WORD_PULSE_MODEL")
-    )
-    if not all([base_url, api_key, model]):
-        return None
-    return base_url, api_key, model  # type: ignore[return-value]
-
-
-# 共享 fixture:提供凭据,无凭据 skip。
-@pytest.fixture(scope="module")
-def ai_creds() -> tuple[str, str, str]:
-    creds = _get_credentials()
-    if creds is None:
-        pytest.skip(
-            "需要 LIVE_AI_BASE_URL/API_KEY/MODEL 环境变量(或 REFINE_AI_*/WORD_PULSE_*)",
-        )
-    return creds
-
-
 @pytest.fixture
-def refine_ai_config(monkeypatch: pytest.MonkeyPatch, reset_ai_endpoint: None) -> None:
-    """恢复真实供应商档案，按炼化自己的路由检查配置。"""
+def live_ai_config(monkeypatch: pytest.MonkeyPatch, reset_ai_endpoint: None) -> None:
+    """从 NoneBot 配置恢复真实档案，避免离线 fixture 的假端点覆盖实际路由。"""
     from nonebot import get_plugin_config
 
     from src.plugins.ai_provider.config import Config, config as ai_config
     from src.plugins.ai_provider.service import reset_auto_cache
-    from src.plugins.refine.runner import missing_ai_config
 
     settings = get_plugin_config(Config)
     for name in Config.model_fields:
         monkeypatch.setattr(ai_config, name, getattr(settings, name))
     reset_auto_cache()
+
+@pytest.fixture
+def refine_ai_config(live_ai_config: None) -> None:
+    from src.plugins.refine.runner import missing_ai_config
+
     if missing := missing_ai_config():
         pytest.skip(f"炼化 AI 配置不完整：{missing[0]}")
+
+
+@pytest.fixture
+def word_pulse_ai_config(live_ai_config: None) -> None:
+    from src.plugins.word_pulse import _validate_config
+
+    if missing := _validate_config():
+        pytest.skip(missing)
 
 
 # ── 测试 1: refine 基线 ──────────────────────────────────────────────
@@ -107,25 +73,18 @@ async def test_refine_summary_real_api(refine_ai_config: None) -> None:
 @pytest.mark.live_ai
 @pytest.mark.asyncio
 async def test_word_pulse_request_llm_json_object_real_api(
-    ai_creds: tuple[str, str, str],
+    word_pulse_ai_config: None,
 ) -> None:
     """验证 bug#3 修复:word_pulse 的 ``_request_llm`` 用 json_object 对真实 API 可用。
 
     这是 bug#3 的核心验证 —— 如果上游不支持 ``response_format=json_object``,
     会抛 ``WordPulseAIServiceError``。
     """
-    base_url, api_key, model = ai_creds
     from src.plugins.word_pulse.ai import _request_llm
 
     result = await _request_llm(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
+        system='你是助手,只返回 JSON {"status": "ok"}',
         messages=[
-            {
-                "role": "system",
-                "content": '你是助手,只返回 JSON {"status": "ok"}',
-            },
             {"role": "user", "content": "测试"},
         ],
         temperature=0.0,
@@ -141,19 +100,15 @@ async def test_word_pulse_request_llm_json_object_real_api(
 @pytest.mark.live_ai
 @pytest.mark.asyncio
 async def test_word_pulse_expand_charsets_real_api(
-    ai_creds: tuple[str, str, str],
+    word_pulse_ai_config: None,
 ) -> None:
     """验证 ``expand_charsets`` 真实可用,返回符合 pydantic schema。
 
     bug#3 现场:用户报告字符集扩展失败。这个测试模拟真实调用。
     """
-    base_url, api_key, model = ai_creds
     from src.plugins.word_pulse.ai import expand_charsets
 
     result = await expand_charsets(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         seeds=["新能源", "半导体"],
         theme="板块",
         temperature=0.0,
@@ -175,10 +130,9 @@ async def test_word_pulse_expand_charsets_real_api(
 @pytest.mark.live_ai
 @pytest.mark.asyncio
 async def test_word_pulse_classify_batch_real_api(
-    ai_creds: tuple[str, str, str],
+    word_pulse_ai_config: None,
 ) -> None:
     """验证 ``classify_batch`` 真实可用。"""
-    base_url, api_key, model = ai_creds
     from src.plugins.word_pulse.ai import classify_batch
 
     messages = [
@@ -187,9 +141,6 @@ async def test_word_pulse_classify_batch_real_api(
         (3, "今天天气不错"),  # 应归 null
     ]
     result = await classify_batch(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         messages=messages,
         clusters=[
             {"name": "新能源", "aliases": []},
@@ -211,10 +162,9 @@ async def test_word_pulse_classify_batch_real_api(
 @pytest.mark.live_ai
 @pytest.mark.asyncio
 async def test_word_pulse_summarize_real_api(
-    ai_creds: tuple[str, str, str],
+    word_pulse_ai_config: None,
 ) -> None:
     """验证 ``summarize`` 真实可用,返回符合 ``SummaryResult`` schema。"""
-    base_url, api_key, model = ai_creds
     from src.plugins.word_pulse.ai import summarize
 
     prompt = (
@@ -230,9 +180,6 @@ async def test_word_pulse_summarize_real_api(
     )
 
     result = await summarize(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         prompt=prompt,
         temperature=0.3,
         timeout=60.0,
