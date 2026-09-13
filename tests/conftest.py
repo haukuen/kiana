@@ -47,6 +47,8 @@ async def load_plugins(_nonebot_init: None):
     """在 NoneBot 初始化后自动加载插件"""
     from nonebot import load_plugin
 
+    # 先加载前置插件，供协议测试和消费者使用。
+    load_plugin("src.plugins.ai_provider")
     load_plugin("src.plugins.fund")
     load_plugin("src.plugins.gold")
     load_plugin("src.plugins.message_archive")
@@ -73,6 +75,36 @@ def reset_global_mute_cache() -> None:
     from src import plugins as global_plugins
 
     global_plugins._mute_cache.clear()
+
+
+DEFAULT_AI_BASE_URL = "https://example.com/v1"
+DEFAULT_AI_API_KEY = "sk-test"
+DEFAULT_AI_MODEL = "gpt-test"
+DEFAULT_AI_PROVIDER_ID = "fake"
+
+
+@pytest.fixture(autouse=True)
+def reset_ai_endpoint() -> None:
+    """每个用例前把 ai_provider 的供应商档案设回测试默认值。
+
+    共享层及其消费者使用同一套测试档案；
+    需要「未配置」场景的用例自行改 ``config`` 即可，下一个用例会由本 fixture 复原。
+    """
+    from src.plugins.ai_provider.config import config as ai_config
+    from src.plugins.ai_provider.service import reset_auto_cache
+
+    ai_config.ai_providers = [
+        {
+            "id": DEFAULT_AI_PROVIDER_ID,
+            "protocol": "openai_chat",
+            "base_url": DEFAULT_AI_BASE_URL,
+            "api_key": DEFAULT_AI_API_KEY,
+            "models": [],
+        }
+    ]
+    ai_config.ai_default_model = f"{DEFAULT_AI_PROVIDER_ID}/{DEFAULT_AI_MODEL}"
+    ai_config.ai_plugin_models = {}
+    reset_auto_cache()
 
 
 @pytest.fixture(autouse=True)
