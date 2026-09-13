@@ -2,7 +2,8 @@ import json
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
+from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock, transport_failure
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -79,9 +80,12 @@ def expect_bot_not_muted(ctx, group_id: int, self_id: int = 987654321) -> None:
 def configure_sentiment_plugin() -> None:
     from src.plugins.a_share_sentiment import config
 
-    config.a_share_sentiment_base_url = "https://example.com/v1"
-    config.a_share_sentiment_api_key = "test-key"
-    config.a_share_sentiment_model = "test-model"
+    # 测试自行设置启用状态与群组规则，不依赖开发环境文件
+    config.a_share_sentiment_plugin_enabled = True
+    config.a_share_sentiment_group_mode = "all"
+    config.a_share_sentiment_group_whitelist = []
+    config.a_share_sentiment_group_blacklist = []
+    # AI 端点由 ai_provider 前置插件持有，见 conftest 的 reset_ai_endpoint
     config.a_share_sentiment_history_days = 5
     config.a_share_sentiment_min_messages = 20
     config.a_share_sentiment_cooldown_seconds = 300
@@ -418,7 +422,7 @@ def test_build_day_analysis_prioritizes_keywords_and_codes() -> None:
 async def test_request_sentiment_analysis_success() -> None:
     from src.plugins.a_share_sentiment.ai import request_sentiment_analysis
 
-    response = httpx.Response(
+    response = httpx2.Response(
         200,
         json={
             "choices": [
@@ -439,14 +443,11 @@ async def test_request_sentiment_analysis_success() -> None:
                 }
             ]
         },
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)):
         result = await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
@@ -463,20 +464,17 @@ async def test_request_sentiment_analysis_rejects_non_json_content() -> None:
         request_sentiment_analysis,
     )
 
-    response = httpx.Response(
+    response = httpx2.Response(
         200,
         json={"choices": [{"message": {"content": "不是 JSON"}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)),
         pytest.raises(SentimentAIResponseError),
     ):
         await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
@@ -490,20 +488,17 @@ async def test_request_sentiment_analysis_rejects_missing_fields() -> None:
         request_sentiment_analysis,
     )
 
-    response = httpx.Response(
+    response = httpx2.Response(
         200,
         json={"choices": [{"message": {"content": '{"score": 12, "label": "偏悲观"}'}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)),
         pytest.raises(SentimentAIResponseError),
     ):
         await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
@@ -515,13 +510,10 @@ async def test_request_sentiment_analysis_handles_timeout() -> None:
     from src.plugins.a_share_sentiment.ai import SentimentAITimeoutError, request_sentiment_analysis
 
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=httpx.ReadTimeout("timeout"))),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(transport_failure(httpx2.ReadTimeout("timeout")))),
         pytest.raises(SentimentAITimeoutError),
     ):
         await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
@@ -532,19 +524,16 @@ async def test_request_sentiment_analysis_handles_timeout() -> None:
 async def test_request_sentiment_analysis_handles_auth_error() -> None:
     from src.plugins.a_share_sentiment.ai import SentimentAIAuthError, request_sentiment_analysis
 
-    response = httpx.Response(
+    response = httpx2.Response(
         401,
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)),
         pytest.raises(SentimentAIAuthError),
     ):
         await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
@@ -555,20 +544,213 @@ async def test_request_sentiment_analysis_handles_auth_error() -> None:
 async def test_request_sentiment_analysis_handles_server_error() -> None:
     from src.plugins.a_share_sentiment.ai import SentimentAIServiceError, request_sentiment_analysis
 
-    response = httpx.Response(
+    response = httpx2.Response(
         500,
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
     with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)),
         pytest.raises(SentimentAIServiceError),
     ):
         await request_sentiment_analysis(
-            base_url="https://example.com/v1",
-            api_key="key",
-            model="model",
             timeout_seconds=30,
             temperature=0.2,
             prompt_payload="{}",
         )
+
+
+# ── 三种固定协议 + auto 的消费者端到端链路 ────────────────
+
+
+_VALID_RESULT = {
+    "score": 61,
+    "label": "偏乐观",
+    "confidence": 0.66,
+    "summary": "群里整体偏乐观。",
+    "reasons": ["讨论集中在反弹", "看多措辞明显"],
+    "compare_to_history": "比近5日基线更积极。",
+}
+
+_PROTOCOL_REPLIES = {
+    "success": {
+        "openai_chat": {
+            "choices": [
+                {"message": {"content": json.dumps(_VALID_RESULT, ensure_ascii=False)}, "finish_reason": "stop"}
+            ]
+        },
+        "anthropic_messages": {
+            "content": [{"type": "text", "text": json.dumps(_VALID_RESULT, ensure_ascii=False)}],
+            "stop_reason": "end_turn",
+        },
+        "openai_responses": {
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": json.dumps(_VALID_RESULT, ensure_ascii=False)}]}
+            ],
+        },
+    },
+    "refusal": {
+        "openai_chat": {"choices": [{"message": {"content": None, "refusal": "无法协助该请求"}, "finish_reason": "stop"}]},
+        "anthropic_messages": {"content": [{"type": "refusal", "refusal": "无法协助该请求"}], "stop_reason": "refusal"},
+        "openai_responses": {
+            "object": "response",
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "refusal", "refusal": "无法协助该请求"}]}],
+        },
+    },
+    "truncated": {
+        "openai_chat": {"choices": [{"message": {"content": "部分"}, "finish_reason": "length"}]},
+        "anthropic_messages": {"content": [{"type": "text", "text": "部分"}], "stop_reason": "max_tokens"},
+        "openai_responses": {
+            "object": "response",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [],
+        },
+    },
+}
+
+
+def _install_protocol_provider(protocol: str) -> None:
+    from src.plugins.ai_provider.config import config as ai_config
+    from src.plugins.ai_provider.service import reset_auto_cache
+
+    ai_config.ai_providers = [
+        {
+            "id": "fake",
+            "protocol": protocol,
+            "base_url": "https://example.com/v1",
+            "api_key": "sk-test",
+            "models": [],
+        }
+    ]
+    reset_auto_cache()
+
+
+def _protocol_handler(mode: str, protocol: str):
+    """按协议返回成功/拒绝/截断响应；auto 协议下 chat 与 messages 端点先 404。"""
+
+    def handler(request):
+        url = str(request.url)
+        if protocol == "auto" and (url.endswith("/chat/completions") or url.endswith("/messages")):
+            return httpx2.Response(404, request=httpx2.Request("POST", url))
+        return httpx2.Response(
+            200,
+            json=_PROTOCOL_REPLIES[mode]["openai_responses" if protocol == "auto" else protocol],
+            request=httpx2.Request("POST", url),
+        )
+
+    return handler
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic_messages", "openai_responses", "auto"])
+async def test_sentiment_consumer_chain_succeeds_on_every_protocol(protocol: str) -> None:
+    from src.plugins.a_share_sentiment.ai import request_sentiment_analysis
+
+    _install_protocol_provider(protocol)
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(_protocol_handler("success", protocol))):
+        result = await request_sentiment_analysis(
+            timeout_seconds=30,
+            temperature=0.2,
+            prompt_payload="{}",
+        )
+
+    assert result.score == 61
+    assert result.label == "偏乐观"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic_messages", "openai_responses", "auto"])
+@pytest.mark.parametrize("mode", ["refusal", "truncated"])
+async def test_sentiment_consumer_maps_rejection_and_truncation(mode: str, protocol: str) -> None:
+    """拒绝与截断必须严格失败，并映射成本插件的 SentimentAIResponseError。"""
+    from src.plugins.a_share_sentiment.ai import SentimentAIResponseError, request_sentiment_analysis
+
+    _install_protocol_provider(protocol)
+    with (
+        patch(AI_HTTP_TARGET, new=AIHttpMock(_protocol_handler(mode, protocol))),
+        pytest.raises(SentimentAIResponseError),
+    ):
+        await request_sentiment_analysis(
+            timeout_seconds=30,
+            temperature=0.2,
+            prompt_payload="{}",
+        )
+
+
+@pytest.mark.asyncio
+async def test_sentiment_temperature_conflict_maps_to_plugin_config_error() -> None:
+    """合法配置 temperature=1.5 撞上 Anthropic send 策略：注入的配置异常，不是裸 AIConfigError。"""
+    from src.plugins.a_share_sentiment.ai import (
+        SentimentAIConfigError,
+        request_sentiment_analysis,
+    )
+    from src.plugins.ai_provider.config import config as ai_config
+    from src.plugins.ai_provider.service import reset_auto_cache
+
+    ai_config.ai_providers = [
+        {
+            "id": "fake",
+            "protocol": "anthropic_messages",
+            "base_url": "https://example.com/v1",
+            "api_key": "sk-test",
+            "temperature_policy": "send",
+            "models": [],
+        }
+    ]
+    reset_auto_cache()
+    with pytest.raises(SentimentAIConfigError, match="0 到 1"):
+        await request_sentiment_analysis(
+            timeout_seconds=30,
+            temperature=1.5,
+            prompt_payload="{}",
+        )
+
+
+def _strip_descriptions(node: object) -> object:
+    """保留 schema 结构，以区分字段约束和描述中的提示文本。"""
+    if isinstance(node, dict):
+        return {key: ("<desc>" if key == "description" else _strip_descriptions(value)) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_strip_descriptions(item) for item in node]
+    return node
+
+
+@pytest.mark.parametrize("protocol", ["anthropic_messages", "openai_chat"])
+async def test_sentiment_wire_schema_preserves_sdk_constraint_contract(protocol: str) -> None:
+    """业务模型经真实消费者调用，验证两种 SDK 的约束转换。"""
+    from src.plugins.a_share_sentiment.ai import SentimentAnalysisResult, request_sentiment_analysis
+
+    _install_protocol_provider(protocol)
+    http = AIHttpMock(_protocol_handler("success", protocol))
+    with patch(AI_HTTP_TARGET, new=http):
+        result = await request_sentiment_analysis(
+            timeout_seconds=30, temperature=0.2, prompt_payload="{}",
+        )
+
+    assert result == SentimentAnalysisResult(**_VALID_RESULT)
+    body = http.bodies()[0]
+    if protocol == "anthropic_messages":
+        schema = body["output_config"]["format"]["schema"]
+        dumped = json.dumps(_strip_descriptions(schema))
+        for key in ("minimum", "maximum", "multipleOf", "minLength", "maxLength", "maxItems"):
+            assert key not in dumped
+        assert "minimum: 0" in schema["properties"]["score"].get("description", "")
+        assert "maximum: 100" in schema["properties"]["score"].get("description", "")
+    else:
+        schema = body["response_format"]["json_schema"]["schema"]
+        assert body["response_format"]["json_schema"]["strict"] is True
+        assert schema["properties"]["score"]["minimum"] == 0
+        assert schema["properties"]["score"]["maximum"] == 100
+    assert schema["additionalProperties"] is False
+
+
+def test_sentiment_config_no_longer_owns_endpoint() -> None:
+    from src.plugins.a_share_sentiment.config import Config
+
+    assert not {
+        "a_share_sentiment_base_url", "a_share_sentiment_api_key", "a_share_sentiment_model",
+    } & Config.model_fields.keys()
