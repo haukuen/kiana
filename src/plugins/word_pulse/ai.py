@@ -42,46 +42,60 @@ _AI_ERRORS = _ai.AIErrorTypes(
 
 
 class CharsetItem(BaseModel):
-    cluster: str
-    chars: list[str] = Field(min_length=5, max_length=30)
+    cluster: str = Field(description="输入的子类种子词，须与输入对应")
+    chars: list[str] = Field(
+        min_length=5,
+        max_length=30,
+        description="该子类语境下语义相关的中文单字，每项只含一个汉字",
+    )
 
 
 class CharsetExpansionResponse(BaseModel):
-    charsets: list[CharsetItem]
+    charsets: list[CharsetItem] = Field(description="每个输入子类对应一个字符集")
 
 
 class BatchClassifyItem(BaseModel):
-    id: int
-    cluster: str | None
+    id: int = Field(description="输入消息的 id")
+    cluster: str | None = Field(description="最匹配的输入子类名；不属于主题时为 null")
 
 
 class BatchClassificationResponse(BaseModel):
-    results: list[BatchClassifyItem]
+    results: list[BatchClassifyItem] = Field(
+        description="每条输入消息对应一个条目，id 与输入消息一一对应"
+    )
 
 
 class RankItem(BaseModel):
-    cluster: str
-    count: int
-    percent: float
+    cluster: str = Field(description="输入的子类名")
+    count: int = Field(description="该子类在统计窗口内的消息数")
+    percent: float = Field(description="该子类的热度百分比")
 
 
 class ExampleItem(BaseModel):
-    cluster: str
-    text: str
-    author: str
-    day: str
+    cluster: str = Field(description="原文所属的输入子类名")
+    text: str = Field(description="输入提供的典型原文，不得改写")
+    author: str = Field(description="该原文的发言人")
+    day: str = Field(description="该原文在输入中的日期，格式为 YYYY-MM-DD")
 
 
 class UnclassifiedTerm(BaseModel):
-    term: str
-    count: int
+    term: str = Field(description="输入提供的未分类高频词")
+    count: int = Field(description="输入提供的该词出现次数")
 
 
 class SummaryResult(BaseModel):
-    ranking: list[RankItem]
-    trend: str
-    examples: list[ExampleItem] = Field(max_length=5)
-    unclassified_high_freq: list[UnclassifiedTerm] = Field(max_length=8)
+    ranking: list[RankItem] = Field(description="各子类按统计数据形成的热度排名")
+    trend: str = Field(description="结合各日期日桶比较变化的趋势总结，不超过 80 字")
+    examples: list[ExampleItem] = Field(
+        max_length=5,
+        description="统计窗口内的典型原文，最多 5 条",
+    )
+    unclassified_high_freq: list[UnclassifiedTerm] = Field(
+        max_length=8,
+        description=(
+            "仅列出输入提供且可核对的未分类词频；缺少词频依据时返回空列表，禁止猜测，最多 8 条"
+        ),
+    )
 
 
 async def _request_llm[T: BaseModel](
@@ -114,10 +128,7 @@ async def _request_llm[T: BaseModel](
 _CHARSET_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类（cluster）种子词，"
     "为每个 cluster 列出该话题语境下语义相关的中文字符（用于粗过滤）。"
-    "只返回字符（单字），不要返回词。宁可多列不可漏列。\n"
-    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
-    '{"charsets": [{"cluster": "种子词", "chars": ["字1", "字2", ...]}]}\n'
-    "每个 cluster 的 chars 数组必须含 5-30 个字符。"
+    "每个输入 cluster 都须对应输出；只返回字符（单字），不要返回词。宁可多列不可漏列。"
 )
 
 
@@ -151,10 +162,8 @@ _BATCH_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类簇定义，"
     "把每条消息归到一个最匹配的子类或 null（表示不属于该主题）。\n"
     "子类描述中若带「别名:」后缀，表示该子类同时匹配这些别名表达，"
-    "归到该子类时按等同语义处理。\n"
-    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
-    '{"results": [{"id": <消息id>, "cluster": "子类名" 或 null}]}\n'
-    "results 数组必须为每条输入消息返回一个条目，id 与输入消息的 [id] 对应。"
+    "归到该子类时按等同语义处理。每条输入消息都须对应一个结果，"
+    "id 与输入消息的 [id] 对应。"
 )
 
 
@@ -198,13 +207,8 @@ async def classify_batch(
 
 _SUMMARY_SYSTEM = (
     "你是中文群聊话题热度分析助手。根据提供的日桶统计数据，"
-    "给出主题讨论的趋势总结和典型原文。趋势总结 ≤ 80 字。\n"
-    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
-    '{"ranking": [{"cluster": "x", "count": N, "percent": M}], '
-    '"trend": "≤80字趋势总结", '
-    '"examples": [{"cluster": "x", "text": "原文", "author": "发言人", "day": "YYYY-MM-DD"}], '
-    '"unclassified_high_freq": [{"term": "词", "count": N}]}\n'
-    "examples 最多 5 条；unclassified_high_freq 最多 8 条。"
+    "比较各日期的讨论变化，给出主题讨论的热度排名、趋势总结和典型原文。"
+    "趋势总结不超过 80 字；典型原文不得改写，发言人和日期须与输入对应。"
 )
 
 

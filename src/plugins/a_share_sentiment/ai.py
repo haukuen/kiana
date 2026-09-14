@@ -15,7 +15,12 @@ _ai = require("src.plugins.ai_provider")
 
 CALLER = "a_share_sentiment"
 
-_SYSTEM_PROMPT = "你是审慎的 A 股群聊情绪分析助手，只返回严格 JSON。"
+_SYSTEM_PROMPT = (
+    "你是审慎的 A 股群聊情绪分析助手。根据给定的群聊数据评估群内 A 股情绪，"
+    "只能基于群聊内容本身判断，不要引入外部市场数据。重点关注聊天里的看多/看空措辞、"
+    "追涨杀跌、连板/炸板、仓位变化、亏钱效应/赚钱效应，以及是否出现明显的 FOMO、"
+    "恐慌或冷淡。根据数据中的日期区分今日与历史，并比较今日和输入中提供的历史基线。"
+)
 
 
 class SentimentAIError(Exception):
@@ -52,12 +57,14 @@ _AI_ERRORS = _ai.AIErrorTypes(
 
 
 class SentimentAnalysisResult(BaseModel):
-    score: int = Field(ge=0, le=100)
-    label: Literal["极度悲观", "偏悲观", "中性", "偏乐观", "极度乐观"]
-    confidence: float = Field(ge=0, le=1)
-    summary: str
-    reasons: list[str]
-    compare_to_history: str
+    score: int = Field(ge=0, le=100, description="群内 A 股情绪指数，0 最悲观，100 最乐观")
+    label: Literal["极度悲观", "偏悲观", "中性", "偏乐观", "极度乐观"] = Field(
+        description="与情绪指数一致的情绪等级"
+    )
+    confidence: float = Field(ge=0, le=1, description="基于输入样本充分程度的置信度")
+    summary: str = Field(description="对今日群聊 A 股情绪的一句总评")
+    reasons: list[str] = Field(description="基于群聊原文的 2 到 4 条判断原因")
+    compare_to_history: str = Field(description="今日情绪相对输入中提供的历史基线的简短描述")
 
     @field_validator("summary", "compare_to_history")
     @classmethod
@@ -76,19 +83,6 @@ class SentimentAnalysisResult(BaseModel):
         return normalized
 
 
-def build_prompt(prompt_payload: str) -> str:
-    return (
-        "请你根据给定的群聊数据评估群内 A 股情绪，只能基于群聊内容本身判断，不要引入外部市场数据。"
-        "输出必须是严格 JSON 对象，不要输出 Markdown，不要补充解释。\n"
-        'JSON 字段固定为: {"score":0-100整数,"label":"极度悲观|偏悲观|中性|偏乐观|极度乐观",'
-        '"confidence":0-1小数,"summary":"一句总评","reasons":["原因1","原因2"],'
-        '"compare_to_history":"相对近5日基线的简短描述"}。\n'
-        "请重点关注聊天里的看多/看空措辞、追涨杀跌、连板/炸板、仓位变化、亏钱效应/赚钱效应、"
-        "以及是否出现明显的 FOMO、恐慌或冷淡。\n"
-        f"群聊数据如下：\n{prompt_payload}"
-    )
-
-
 async def request_sentiment_analysis(
     *,
     timeout_seconds: float,
@@ -105,7 +99,7 @@ async def request_sentiment_analysis(
     result = await _ai.complete(
         caller=CALLER,
         system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_prompt(prompt_payload)}],
+        messages=[{"role": "user", "content": prompt_payload}],
         response_model=SentimentAnalysisResult,
         temperature=temperature,
         timeout_seconds=timeout_seconds,
