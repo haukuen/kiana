@@ -28,36 +28,12 @@ from nonebot.adapters.onebot.v11 import (
 from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
-# ── 事件工厂 ────────────────────────────────────────────
-
-
-def make_group_event(
-    message: Message | str,
-    *,
-    message_id: int = 1,
-    user_id: int = 100001,
-    group_id: int = 200001,
-    self_id: int = 987654321,
-    nickname: str = "测试用户",
-    card: str = "",
-    event_time: int | None = None,
-) -> GroupMessageEvent:
-    actual = message if isinstance(message, Message) else Message(message)
-    return GroupMessageEvent(
-        time=event_time or int(datetime.now().timestamp()),
-        self_id=self_id,
-        post_type="message",
-        sub_type="normal",
-        user_id=user_id,
-        message_type="group",
-        group_id=group_id,
-        message_id=message_id,
-        message=actual,
-        original_message=actual.copy(),
-        raw_message=str(actual),
-        font=0,
-        sender=Sender(user_id=user_id, nickname=nickname, card=card, role="member"),
-    )
+from tests.refine_helpers import (
+    expect_bot_not_muted,
+    fake_ai_response as _fake_ai_response,
+    fake_dt as _fake_dt,
+    make_group_event,
+)
 
 
 def configure_refine_plugin(**overrides: object) -> None:
@@ -66,38 +42,6 @@ def configure_refine_plugin(**overrides: object) -> None:
 
     for key, value in overrides.items():
         setattr(rp.config, key, value)
-
-
-def _fake_ai_response(content: str = "AI 生成的总结") -> httpx2.Response:
-    return httpx2.Response(
-        200,
-        json={
-            "choices": [
-                {"message": {"role": "assistant", "content": content}},
-            ],
-        },
-        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-
-
-def expect_bot_not_muted(
-    ctx, group_id: int = 200001, self_id: int = 987654321
-) -> None:
-    """should_call_send 之前必须先声明：bot 不被禁言。
-
-    项目 ``check_group_permission`` 在群消息场景下会查 mute cache，触发
-    get_group_member_info API。未先声明会导致 nonebug 报意外 API 调用。
-    """
-    ctx.should_call_api(
-        "get_group_member_info",
-        {"group_id": group_id, "user_id": self_id, "no_cache": True},
-        result={"shut_up_timestamp": 0},
-    )
-
-
-def _fake_dt():
-    """返回一个 strftime 始终输出 'T' 的假 datetime 实例。"""
-    return type("FakeDT", (), {"strftime": lambda self, fmt: "T"})()
 
 
 # ── 公共 fixture ────────────────────────────────────────
@@ -136,7 +80,6 @@ def _reset_refine_cooldown() -> None:
 async def test_db_subscription_crud() -> None:
     from src.plugins.refine.db import (
         add_subscription,
-        conflict_on_label,
         conflict_on_target,
         delete_subscription,
         get_subscription_by_label,
@@ -149,7 +92,7 @@ async def test_db_subscription_crud() -> None:
     assert sub is not None
     assert sub.label == "张三"
 
-    assert await conflict_on_label("g1", "张三") is not None
+    assert await get_subscription_by_label("g1", "张三") is not None
     assert await conflict_on_target("g1", "user", "u1") is not None
     again = await add_subscription(
         group_id="g1", target_type="user", target_value="u1", label="别名"

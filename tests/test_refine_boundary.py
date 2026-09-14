@@ -28,7 +28,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -36,58 +35,15 @@ from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    GroupMessageEvent,
     Message,
     MessageSegment,
 )
-from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
-# ── 本地工厂(与 test_refine.py / test_fixes_e2e.py 保持一致) ──────────
-
-
-def _make_group_event(
-    message: Message | str,
-    *,
-    message_id: int = 1,
-    user_id: int = 100001,
-    group_id: int = 200001,
-    self_id: int = 987654321,
-    nickname: str = "测试用户",
-    card: str = "",
-    event_time: int | None = None,
-) -> GroupMessageEvent:
-    actual = message if isinstance(message, Message) else Message(message)
-    return GroupMessageEvent(
-        time=event_time or int(datetime.now().timestamp()),
-        self_id=self_id,
-        post_type="message",
-        sub_type="normal",
-        user_id=user_id,
-        message_type="group",
-        group_id=group_id,
-        message_id=message_id,
-        message=actual,
-        original_message=actual.copy(),
-        raw_message=str(actual),
-        font=0,
-        sender=Sender(user_id=user_id, nickname=nickname, card=card, role="member"),
-    )
-
-
-def _expect_bot_not_muted(
-    ctx, group_id: int = 200001, self_id: int = 987654321
-) -> None:
-    """声明 bot 不被禁言 — should_call_send / should_pass_rule 之前必须调用。
-
-    项目 ``check_bot_mute_status`` preprocessor 在群消息场景下会查 mute cache,
-    触发 get_group_member_info API。未先声明会导致 nonebug 报意外 API 调用。
-    """
-    ctx.should_call_api(
-        "get_group_member_info",
-        {"group_id": group_id, "user_id": self_id, "no_cache": True},
-        result={"shut_up_timestamp": 0},
-    )
+from tests.refine_helpers import (
+    expect_bot_not_muted as _expect_bot_not_muted,
+    make_group_event as _make_group_event,
+)
 
 
 def _configure_refine_plugin() -> None:

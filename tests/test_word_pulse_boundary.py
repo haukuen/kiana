@@ -326,7 +326,7 @@ async def test_request_llm_valid_json_content_returns_dict(app: App) -> None:
 async def test_request_llm_invalid_json_content_raises_response_error(app: App) -> None:
     """模型输出 content 不是合法 JSON → WordPulseAIResponseError。
 
-    边界:ai.py 中 ``_request_llm`` 先用 ``extract_json_text`` 剥围栏并截取
+    边界:ai.py 中 ``_request_llm`` 先用 ``extract_json_text`` 截取
     ``{...}`` 区间，再 ``json.loads``。两条失败路径都应转为
     ``WordPulseAIResponseError``：
       - 找不到 ``{...}`` 区间 → 「模型输出中没有 JSON 对象」
@@ -351,7 +351,7 @@ async def test_request_llm_invalid_json_content_raises_response_error(app: App) 
 async def test_request_llm_no_json_braces_raises_response_error(app: App) -> None:
     """模型输出 content 完全不含 ``{...}`` → WordPulseAIResponseError。
 
-    边界:ai.py ``extract_json_text`` 在剥离围栏后 ``find('{')`` 失败 →
+    边界:ai.py ``extract_json_text`` 的 ``find('{')`` 失败 →
     抛 WordPulseAIResponseError「模型输出中没有 JSON 对象」。
     覆盖纯文本/只有围栏没有 JSON 对象的降级路径。
     """

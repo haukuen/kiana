@@ -1454,3 +1454,25 @@ async def test_sdk_http_client_is_closed_on_success_and_failure() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
     assert created[-1].is_closed, "取消路径也必须关闭客户端"
+
+
+@pytest.mark.parametrize("content, expected", [
+    ('{"x": 1}', '{"x": 1}'),
+    ('```json\n{"x": 1}\n```', '{"x": 1}'),
+    ('```\n{"x": 1}\n```', '{"x": 1}'),
+    ('  说明\n```JSON\n{"x": 1}\n```\n结束  ', '{"x": 1}'),
+    ('```json\n{"nested": {"text": "{}"}}\n```', '{"nested": {"text": "{}"}}'),
+    ('```json\n{invalid}\n```', '{invalid}'),
+    ('', None),
+    ('```json\n[]\n```', None),
+    ('} {', None),
+    ('{"x": 1', None),
+])
+def test_extract_json_text_preserves_object_and_missing_object_error(content, expected) -> None:
+    from src.plugins.ai_provider import AIResponseError, extract_json_text
+
+    if expected is None:
+        with pytest.raises(AIResponseError, match="^模型输出中没有 JSON 对象$"):
+            extract_json_text(content)
+    else:
+        assert extract_json_text(content) == expected

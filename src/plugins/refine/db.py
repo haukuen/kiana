@@ -156,16 +156,6 @@ async def conflict_on_target(
     return _row_to_subscription(row) if row else None
 
 
-async def conflict_on_label(group_id: str, label: str) -> RefineSubscription | None:
-    """检查 label 是否在该群已被使用。"""
-    db = get_db()
-    row = await db.fetch_one(
-        "SELECT * FROM refine_subscription WHERE group_id = ? AND label = ?",
-        (group_id, label),
-    )
-    return _row_to_subscription(row) if row else None
-
-
 async def list_subscriptions(group_id: str) -> list[RefineSubscription]:
     db = get_db()
     rows = await db.fetch_all(

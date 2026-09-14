@@ -31,7 +31,6 @@ URL 拼接、认证头、请求序列化、响应反序列化和 HTTP 状态分�
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,9 +51,6 @@ from openai.types.responses import Response, ResponseInputParam
 from .config import ProtocolName, ProviderConfig, provider_sends_temperature
 from .errors import DEFAULT_AI_ERRORS, AIErrorTypes, AIResponseError
 from .types import ChatRequest
-
-_FENCE_PREFIX_RE = re.compile(r"^```(?:json)?\s*")
-_FENCE_SUFFIX_RE = re.compile(r"\s*```$")
 
 _JSON_INSTRUCTION = "只输出一个 JSON 对象，不要输出 Markdown 代码围栏或任何解释文字。"
 
@@ -181,8 +177,6 @@ def extract_json_text(content: str, *, errors: AIErrorTypes = DEFAULT_AI_ERRORS)
     容错解析兜底；走官方严格结构化输出（``response_model``）时用不到它。
     """
     stripped = content.strip()
-    if stripped.startswith("```"):
-        stripped = _FENCE_SUFFIX_RE.sub("", _FENCE_PREFIX_RE.sub("", stripped))
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end == -1 or start > end:

@@ -9,8 +9,7 @@
 5. **help**:`词频 帮助` 与 `词频 help` 都能触发并返回完整帮助文案
 
 复用 conftest.py 的 `App` fixture 与 autouse 的 `reset_*` 表清理 fixture。
-辅助函数(`_make_group_event` / `_expect_bot_not_muted` / `_fake_ai_response` /
-`_fake_dt`)从 test_refine_integration.py 拷贝过来,避免跨文件 import 测试辅助。
+事件、API 预期和响应工厂复用 tests.refine_helpers。
 
 不修改任何源代码、不修改其他测试。
 """
@@ -18,7 +17,6 @@
 from __future__ import annotations
 
 import json as json_lib
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -26,74 +24,16 @@ from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    GroupMessageEvent,
     Message,
 )
-from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
-# ── 本地辅助工厂(从 test_refine_integration.py 拷贝,保持一致) ──
-
-
-def _make_group_event(
-    message: Message | str,
-    *,
-    message_id: int = 1,
-    user_id: int = 100001,
-    group_id: int = 200001,
-    self_id: int = 987654321,
-    nickname: str = "测试用户",
-    card: str = "",
-    event_time: int | None = None,
-) -> GroupMessageEvent:
-    actual = message if isinstance(message, Message) else Message(message)
-    return GroupMessageEvent(
-        time=event_time or int(datetime.now().timestamp()),
-        self_id=self_id,
-        post_type="message",
-        sub_type="normal",
-        user_id=user_id,
-        message_type="group",
-        group_id=group_id,
-        message_id=message_id,
-        message=actual,
-        original_message=actual.copy(),
-        raw_message=str(actual),
-        font=0,
-        sender=Sender(user_id=user_id, nickname=nickname, card=card, role="member"),
-    )
-
-
-def _expect_bot_not_muted(
-    ctx, group_id: int = 200001, self_id: int = 987654321
-) -> None:
-    """声明 bot 不被禁言 — should_call_send 之前必须调用。
-
-    项目 ``check_bot_mute_status`` preprocessor 在群消息场景下会查 mute cache,
-    触发 get_group_member_info API。未先声明会导致 nonebug 报意外 API 调用。
-    """
-    ctx.should_call_api(
-        "get_group_member_info",
-        {"group_id": group_id, "user_id": self_id, "no_cache": True},
-        result={"shut_up_timestamp": 0},
-    )
-
-
-def _fake_ai_response(content: str = "AI 生成的总结") -> httpx2.Response:
-    return httpx2.Response(
-        200,
-        json={
-            "choices": [
-                {"message": {"role": "assistant", "content": content}},
-            ],
-        },
-        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-
-
-def _fake_dt():
-    """返回一个 strftime 始终输出 'T' 的假 datetime 实例。"""
-    return type("FakeDS", (), {"strftime": lambda self, fmt: "T"})()
+from tests.refine_helpers import (
+    expect_bot_not_muted as _expect_bot_not_muted,
+    fake_ai_response as _fake_ai_response,
+    fake_dt as _fake_dt,
+    make_group_event as _make_group_event,
+)
 
 
 def _configure_refine_plugin_for_e2e(rp) -> None:
