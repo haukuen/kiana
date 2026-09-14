@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from nonebot import logger, require
 from pydantic import BaseModel, Field
 
@@ -161,9 +163,8 @@ async def expand_charsets(
 _BATCH_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类簇定义，"
     "把每条消息归到一个最匹配的子类或 null（表示不属于该主题）。\n"
-    "子类描述中若带「别名:」后缀，表示该子类同时匹配这些别名表达，"
-    "归到该子类时按等同语义处理。每条输入消息都须对应一个结果，"
-    "id 与输入消息的 [id] 对应。"
+    "子类的 aliases 列出与 name 等同的别名表达，归类时返回该子类的 name。"
+    "每条输入消息都须对应一个结果，id 与输入消息的 id 对应。"
 )
 
 
@@ -178,21 +179,22 @@ async def classify_batch(
 ) -> list[tuple[int, str | None]]:
     if not messages:
         return []
-    cluster_lines = "\n".join(
-        f"- {c['name']}" + (f" (别名: {', '.join(c['aliases'])})" if c.get("aliases") else "")
-        for c in clusters
-    )
+    cluster_defs = [{"name": c["name"], "aliases": c.get("aliases") or []} for c in clusters]
     all_results: list[tuple[int, str | None]] = []
     for start in range(0, len(messages), max_batch_size):
         chunk = messages[start : start + max_batch_size]
-        msg_lines = "\n".join(f"[{mid}] {txt}" for mid, txt in chunk)
+        payload = {
+            "theme": theme_name,
+            "clusters": cluster_defs,
+            "messages": [{"id": mid, "text": text} for mid, text in chunk],
+        }
         validated = await _request_llm(
             response_model=BatchClassificationResponse,
             system=_BATCH_SYSTEM,
             messages=[
                 {
                     "role": "user",
-                    "content": f"主题：{theme_name}\n子类：\n{cluster_lines}\n\n消息：\n{msg_lines}",
+                    "content": json.dumps(payload, ensure_ascii=False),
                 },
             ],
             temperature=temperature,

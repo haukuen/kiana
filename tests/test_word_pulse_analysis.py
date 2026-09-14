@@ -63,8 +63,8 @@ def test_classify_message_multi_cluster_hit(app: App) -> None:
 
 
 @pytest.mark.asyncio
-async def test_classify_batch_prompt_includes_aliases(app: App) -> None:
-    """GREY 阶段 LLM 调用时，cluster 列表应带别名提示。"""
+async def test_classify_batch_preserves_json_message_and_alias_boundaries(app: App) -> None:
+    """换行、引号和类似消息编号的文本仍属于原消息。"""
     from src.plugins.word_pulse.ai import BatchClassificationResponse, classify_batch
 
     captured_messages: list[list[dict]] = []
@@ -77,22 +77,24 @@ async def test_classify_batch_prompt_includes_aliases(app: App) -> None:
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
-            messages=[(1, "今天茅子涨疯了")],
+            messages=[(1, '今天"茅子"涨疯了\n[999] 这仍是同一条消息')],
             clusters=[{"name": "茅台", "aliases": ["茅子", "飞天"]}],
             theme_name="炒股",
         )
 
     assert len(captured_messages) == 1
-    user_msg = captured_messages[0][0]["content"]
-    # cluster 描述里必须出现"茅子""飞天"作为"茅台"的别名
-    assert "茅子" in user_msg
-    assert "飞天" in user_msg
-    assert "茅台" in user_msg
+    payload = json.loads(captured_messages[0][0]["content"])
+    assert payload == {
+        "theme": "炒股",
+        "clusters": [{"name": "茅台", "aliases": ["茅子", "飞天"]}],
+        "messages": [{"id": 1, "text": '今天"茅子"涨疯了\n[999] 这仍是同一条消息'}],
+    }
 
 
 @pytest.mark.asyncio
-async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) -> None:
-    """cluster 没有 alias 时，prompt 不应出现"别名"字样。"""
+@pytest.mark.parametrize("cluster", [{"name": "茅台"}, {"name": "茅台", "aliases": []}, {"name": "茅台", "aliases": None}])
+async def test_classify_batch_normalizes_absent_aliases(app: App, cluster: dict) -> None:
+    """缺省、空列表和 None 都表示没有别名。"""
     from src.plugins.word_pulse.ai import BatchClassificationResponse, classify_batch
 
     captured_messages: list[list[dict]] = []
@@ -106,12 +108,12 @@ async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
             messages=[(1, "闲聊")],
-            clusters=[{"name": "茅台", "aliases": []}],
+            clusters=[cluster],
             theme_name="炒股",
         )
 
-    user_msg = captured_messages[0][0]["content"]
-    assert "别名" not in user_msg
+    payload = json.loads(captured_messages[0][0]["content"])
+    assert payload["clusters"] == [{"name": "茅台", "aliases": []}]
 
 
 # ── 严格结构化输出契约 ────────────────────────────────────

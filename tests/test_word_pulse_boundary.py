@@ -285,13 +285,11 @@ async def test_classify_batch_over_max_batch_size_splits_into_chunks(app: App) -
     async def fake_request(*, messages, **_):
         nonlocal call_count
         call_count += 1
-        # 从 user message 里解析 [id] 还原 results
-        user_msg = messages[0]["content"]
-        ids = []
-        for line in user_msg.split("\n"):
-            if line.startswith("[") and "]" in line:
-                id_str = line[1:line.index("]")]
-                ids.append(int(id_str))
+        payload = json.loads(messages[0]["content"])
+        ids = [item["id"] for item in payload["messages"]]
+        assert 1 <= len(ids) <= 2
+        assert payload["theme"] == "炒股"
+        assert payload["clusters"] == [{"name": "茅台", "aliases": []}]
         from src.plugins.word_pulse.ai import BatchClassificationResponse
 
         return BatchClassificationResponse.model_validate(

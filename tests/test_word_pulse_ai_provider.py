@@ -104,6 +104,14 @@ async def test_word_pulse_operations_use_shared_route_and_strict_schema(protocol
     schema = _wire_schema(protocol, body)
     assert schema["additionalProperties"] is False
     assert schema["required"]
+    if operation == "classify":
+        input_messages = body["input"] if protocol == "openai_responses" else body["messages"]
+        user_content = next(message["content"] for message in input_messages if message["role"] == "user")
+        assert json.loads(user_content) == {
+            "theme": "炒股",
+            "clusters": [{"name": "茅台", "aliases": []}],
+            "messages": [{"id": 1, "text": "茅子涨了"}],
+        }
     if protocol == "anthropic_messages":
         assert request.url.path == "/v1/messages"
         assert request.headers["x-api-key"] == "word-key"
