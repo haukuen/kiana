@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
-
 from nonebot import logger, require
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 _ai = require("src.plugins.ai_provider")
 
@@ -86,31 +84,28 @@ class SummaryResult(BaseModel):
     unclassified_high_freq: list[UnclassifiedTerm] = Field(max_length=8)
 
 
-async def _request_llm(
+async def _request_llm[T: BaseModel](
     *,
+    response_model: type[T],
     system: str = "",
     messages: list[dict[str, str]],
     temperature: float,
     timeout_seconds: float,
-) -> dict:
-    """通过前置插件请求 JSON mode，业务 schema 仍由调用方校验。
-
-    部分兼容接口不支持严格 schema，因此保留 json_object 与围栏容错。
-    """
+) -> T:
+    """通过前置插件请求并校验严格结构化输出。"""
     result = await _ai.complete(
         caller=CALLER,
         system=system,
         messages=messages,
-        json_object=True,
+        response_model=response_model,
         temperature=temperature,
         timeout_seconds=timeout_seconds,
         errors=_AI_ERRORS,
     )
     logger.debug(f"[词频统计] AI 原始输出: {result.text}")
-    try:
-        return json.loads(_ai.extract_json_text(result.text, errors=_AI_ERRORS))
-    except json.JSONDecodeError as e:
-        raise WordPulseAIResponseError("模型输出不是合法 JSON") from e
+    if result.parsed is None:  # 共享层已保证 parse 成功非空；防御兜底
+        raise WordPulseAIResponseError("AI 未返回可解析的结构化结果")
+    return result.parsed
 
 
 # ── Call 1: Charset expansion ──
@@ -120,7 +115,7 @@ _CHARSET_SYSTEM = (
     "你是中文群聊话题分类助手。给定主题与子类（cluster）种子词，"
     "为每个 cluster 列出该话题语境下语义相关的中文字符（用于粗过滤）。"
     "只返回字符（单字），不要返回词。宁可多列不可漏列。\n"
-    "必须返回严格 JSON，schema 形如：\n"
+    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
     '{"charsets": [{"cluster": "种子词", "chars": ["字1", "字2", ...]}]}\n'
     "每个 cluster 的 chars 数组必须含 5-30 个字符。"
 )
@@ -134,7 +129,8 @@ async def expand_charsets(
     timeout: float = 60.0,
 ) -> dict[str, list[str]]:
     cluster_lines = "\n".join(f"- {s}" for s in seeds)
-    parsed = await _request_llm(
+    validated = await _request_llm(
+        response_model=CharsetExpansionResponse,
         system=_CHARSET_SYSTEM,
         messages=[
             {
@@ -145,10 +141,6 @@ async def expand_charsets(
         temperature=temperature,
         timeout_seconds=timeout,
     )
-    try:
-        validated = CharsetExpansionResponse.model_validate(parsed)
-    except ValidationError as e:
-        raise WordPulseAIResponseError(f"字符集扩展返回格式异常: {e}") from e
     return {item.cluster: item.chars for item in validated.charsets}
 
 
@@ -160,7 +152,7 @@ _BATCH_SYSTEM = (
     "把每条消息归到一个最匹配的子类或 null（表示不属于该主题）。\n"
     "子类描述中若带「别名:」后缀，表示该子类同时匹配这些别名表达，"
     "归到该子类时按等同语义处理。\n"
-    "必须返回严格 JSON，schema 形如：\n"
+    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
     '{"results": [{"id": <消息id>, "cluster": "子类名" 或 null}]}\n'
     "results 数组必须为每条输入消息返回一个条目，id 与输入消息的 [id] 对应。"
 )
@@ -185,7 +177,8 @@ async def classify_batch(
     for start in range(0, len(messages), max_batch_size):
         chunk = messages[start : start + max_batch_size]
         msg_lines = "\n".join(f"[{mid}] {txt}" for mid, txt in chunk)
-        parsed = await _request_llm(
+        validated = await _request_llm(
+            response_model=BatchClassificationResponse,
             system=_BATCH_SYSTEM,
             messages=[
                 {
@@ -196,10 +189,6 @@ async def classify_batch(
             temperature=temperature,
             timeout_seconds=timeout,
         )
-        try:
-            validated = BatchClassificationResponse.model_validate(parsed)
-        except ValidationError as e:
-            raise WordPulseAIResponseError(f"批量分类返回格式异常: {e}") from e
         all_results.extend((item.id, item.cluster) for item in validated.results)
     return all_results
 
@@ -210,7 +199,7 @@ async def classify_batch(
 _SUMMARY_SYSTEM = (
     "你是中文群聊话题热度分析助手。根据提供的日桶统计数据，"
     "给出主题讨论的趋势总结和典型原文。趋势总结 ≤ 80 字。\n"
-    "必须返回严格 JSON，schema 形如：\n"
+    "必须直接返回符合 schema 的 JSON 对象，不要使用 Markdown 代码围栏。schema 形如：\n"
     '{"ranking": [{"cluster": "x", "count": N, "percent": M}], '
     '"trend": "≤80字趋势总结", '
     '"examples": [{"cluster": "x", "text": "原文", "author": "发言人", "day": "YYYY-MM-DD"}], '
@@ -225,7 +214,8 @@ async def summarize(
     temperature: float = 0.3,
     timeout: float = 60.0,
 ) -> SummaryResult:
-    parsed = await _request_llm(
+    return await _request_llm(
+        response_model=SummaryResult,
         system=_SUMMARY_SYSTEM,
         messages=[
             {"role": "user", "content": prompt},
@@ -233,7 +223,3 @@ async def summarize(
         temperature=temperature,
         timeout_seconds=timeout,
     )
-    try:
-        return SummaryResult.model_validate(parsed)
-    except ValidationError as e:
-        raise WordPulseAIResponseError(f"AI 总结返回格式异常: {e}") from e

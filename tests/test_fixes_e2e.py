@@ -4,8 +4,7 @@
 1. **bug#1**:`炼化这个功能怎么用`(无空格粘连)不应触发任何炼化命令 — force_whitespace=True
 2. **bug#1 对照**:`炼化 <不存在标签>`(有空格)正常进入 handler 并回「未找到标签」
 3. **bug#2**:集合订阅炼化时,所有成员的发言都被采到 prompt 里(per-member 配额)
-4. **bug#3**:word_pulse 的 AI 调用走 `response_format: {type: "json_object"}`,
-   不带 strict json_schema(通过共享 SDK 传输 mock 捕获请求体验证)
+4. **strict output**:word_pulse 把 Pydantic 业务模型作为 JSON Schema 发送
 5. **help**:`词频 帮助` 与 `词频 help` 都能触发并返回完整帮助文案
 
 复用 conftest.py 的 `App` fixture 与 autouse 的 `reset_*` 表清理 fixture。
@@ -239,24 +238,10 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 场景 4: bug#3 — word_pulse AI 用 json_object 而非 strict json_schema
-# ═══════════════════════════════════════════════════════════════
-
-
+# 场景 4: word_pulse 使用严格 JSON Schema
 @pytest.mark.asyncio
-async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
-    """bug#3: word_pulse AI 调用直接用 response_format=json_object,不走 strict。
-
-    修复背景:原 strict json_schema + json_object 两级降级对部分上游 OpenAI
-    兼容网关不兼容(strict 首次即 400),修复为单一 json_object + pydantic 校验。
-
-    验证:通过共享 SDK 传输 mock 捕获请求体,断言:
-    - response_format == {"type": "json_object"}
-    - 不带 strict 字段
-    - response_format 内不含 json_schema 字段
-
-    直接调用 expand_charsets 绕过 matcher,聚焦 AI 调用层。
-    """
+async def test_word_pulse_uses_strict_json_schema(app: App) -> None:
+    """字符集扩展必须把 Pydantic 契约交给 SDK，而不是只请求 JSON 对象。"""
     from src.plugins.word_pulse.ai import expand_charsets  # noqa: PLC0415
 
     captured_body: dict = {}
@@ -268,6 +253,7 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
             json={
                 "choices": [
                     {
+                        "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
                             "content": json_lib.dumps(
@@ -280,33 +266,22 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
                                     ]
                                 }
                             ),
-                        }
+                        },
                     }
                 ]
             },
         )
 
     with patch(AI_HTTP_TARGET, new=AIHttpMock(word_pulse_handler)):
-        result = await expand_charsets(
-            seeds=["测试种子"],
-            theme="测试主题",
-        )
+        result = await expand_charsets(seeds=["测试种子"], theme="测试主题")
 
-    # expand_charsets 返回 {cluster: chars} 字典
     assert "测试种子" in result
-
-    # ── 关键断言:response_format 正确,不走 strict ──
-    rf = captured_body.get("response_format")
-    assert isinstance(rf, dict), f"response_format 必须是 dict,实际: {rf!r}"
-    assert rf == {"type": "json_object"}, (
-        f"response_format 必须是 {{'type': 'json_object'}},实际: {rf}"
-    )
-    # 顶层不能有 strict 痕迹
-    assert "strict" not in captured_body, (
-        f"请求体不应有 strict 字段,实际 keys: {list(captured_body.keys())}"
-    )
-    # response_format 内不能有 json_schema(那是 strict 模式专用的)
-    assert "json_schema" not in rf, f"response_format 不应含 json_schema: {rf}"
+    response_format = captured_body["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert "charsets" in schema["required"]
 
 
 # ═══════════════════════════════════════════════════════════════

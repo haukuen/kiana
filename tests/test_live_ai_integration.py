@@ -41,6 +41,14 @@ def word_pulse_ai_config(live_ai_config: None) -> None:
         pytest.skip(missing)
 
 
+@pytest.fixture
+def sentiment_ai_config(live_ai_config: None) -> None:
+    from src.plugins.ai_provider import resolve
+
+    if missing := resolve("a_share_sentiment").missing:
+        pytest.skip(f"A 股情绪 AI 配置不完整：{missing[0]}")
+
+
 # ── 测试 1: refine 基线 ──────────────────────────────────────────────
 
 
@@ -67,31 +75,32 @@ async def test_refine_summary_real_api(refine_ai_config: None) -> None:
     assert len(summary) < 2000
 
 
-# ── 测试 2: word_pulse _request_llm 走 json_object ────────────────────
+# ── 测试 2: word_pulse _request_llm 走严格结构化输出 ──────────
 
 
 @pytest.mark.live_ai
 @pytest.mark.asyncio
-async def test_word_pulse_request_llm_json_object_real_api(
+async def test_word_pulse_request_llm_strict_schema_real_api(
     word_pulse_ai_config: None,
 ) -> None:
-    """验证 bug#3 修复:word_pulse 的 ``_request_llm`` 用 json_object 对真实 API 可用。
-
-    这是 bug#3 的核心验证 —— 如果上游不支持 ``response_format=json_object``,
-    会抛 ``WordPulseAIServiceError``。
-    """
-    from src.plugins.word_pulse.ai import _request_llm
+    """验证业务 Pydantic 模型经真实接口生成、发送并解析 JSON Schema。"""
+    from src.plugins.word_pulse.ai import (
+        BatchClassificationResponse,
+        _request_llm,
+    )
 
     result = await _request_llm(
-        system='你是助手,只返回 JSON {"status": "ok"}',
+        response_model=BatchClassificationResponse,
+        system="你是分类助手，请按给定结构返回结果。",
         messages=[
-            {"role": "user", "content": "测试"},
+            {"role": "user", "content": "消息 [1] 测试；将 cluster 设为 null"},
         ],
         temperature=0.0,
         timeout_seconds=60.0,
     )
-    assert isinstance(result, dict)
-    assert "status" in result or len(result) > 0
+    assert isinstance(result, BatchClassificationResponse)
+    assert result.results
+    assert result.results[0].id == 1
 
 
 # ── 测试 3: word_pulse expand_charsets 真实可用 ───────────────────────
@@ -226,3 +235,31 @@ async def test_refine_multi_member_summary_covers_all_members(
     assert len(summary) > 50  # 不能是空总结
     # 这个断言可能太严格,作为软断言:打印 warning 而不是 fail。
     # 真实运行后人工 review 总结内容是否平衡。
+
+
+# ── 测试 7: A 股情绪严格结构化输出 ──────────────────────────
+
+
+@pytest.mark.live_ai
+@pytest.mark.asyncio
+async def test_a_share_sentiment_strict_schema_real_api(
+    sentiment_ai_config: None,
+) -> None:
+    """验证复杂业务约束经真实接口生成、发送并解析。"""
+    from src.plugins.a_share_sentiment.ai import (
+        SentimentAnalysisResult,
+        request_sentiment_analysis,
+    )
+
+    result = await request_sentiment_analysis(
+        timeout_seconds=60.0,
+        temperature=0.2,
+        prompt_payload=(
+            "今日样本：看多新能源，计划继续持有；但有人担心估值过高。\n"
+            "近五日基线：讨论热度平稳，情绪中性。"
+        ),
+    )
+    assert isinstance(result, SentimentAnalysisResult)
+    assert 0 <= result.score <= 100
+    assert 0 <= result.confidence <= 1
+    assert 2 <= len(result.reasons) <= 4

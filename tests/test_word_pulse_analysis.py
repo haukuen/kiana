@@ -65,13 +65,15 @@ def test_classify_message_multi_cluster_hit(app: App) -> None:
 @pytest.mark.asyncio
 async def test_classify_batch_prompt_includes_aliases(app: App) -> None:
     """GREY 阶段 LLM 调用时，cluster 列表应带别名提示。"""
-    from src.plugins.word_pulse.ai import classify_batch
+    from src.plugins.word_pulse.ai import BatchClassificationResponse, classify_batch
 
     captured_messages: list[list[dict]] = []
 
     async def fake_request(*, messages, **_):
         captured_messages.append(messages)
-        return {"results": [{"id": 1, "cluster": "茅台"}]}
+        return BatchClassificationResponse.model_validate(
+            {"results": [{"id": 1, "cluster": "茅台"}]}
+        )
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
@@ -91,13 +93,15 @@ async def test_classify_batch_prompt_includes_aliases(app: App) -> None:
 @pytest.mark.asyncio
 async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) -> None:
     """cluster 没有 alias 时，prompt 不应出现"别名"字样。"""
-    from src.plugins.word_pulse.ai import classify_batch
+    from src.plugins.word_pulse.ai import BatchClassificationResponse, classify_batch
 
     captured_messages: list[list[dict]] = []
 
     async def fake_request(*, messages, **_):
         captured_messages.append(messages)
-        return {"results": [{"id": 1, "cluster": None}]}
+        return BatchClassificationResponse.model_validate(
+            {"results": [{"id": 1, "cluster": None}]}
+        )
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         await classify_batch(
@@ -110,18 +114,16 @@ async def test_classify_batch_prompt_omits_aliases_section_when_empty(app: App) 
     assert "别名" not in user_msg
 
 
-# ── bug#3 回归：_request_llm 直接发 json_object，不走 strict→fallback ──
+# ── 严格结构化输出契约 ────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_request_llm_uses_json_object_not_strict(app: App) -> None:
-    """bug#3 回归：_request_llm 直接发 response_format=json_object，不走 strict→fallback。
-
-    通过 httpx2.MockTransport 捕获实际请求体，断言：
-    1. response_format 是 {"type": "json_object"}（不是 strict json_schema）
-    2. 只发一次请求（无降级重试）
-    """
-    from src.plugins.word_pulse.ai import _request_llm  # noqa: PLC0415
+async def test_request_llm_uses_strict_response_model(app: App) -> None:
+    """Pydantic 业务模型必须作为 strict json_schema 随请求发送。"""
+    from src.plugins.word_pulse.ai import (
+        BatchClassificationResponse,
+        _request_llm,
+    )
 
     captured_bodies: list[dict] = []
 
@@ -130,16 +132,30 @@ async def test_request_llm_uses_json_object_not_strict(app: App) -> None:
         captured_bodies.append(body)
         return httpx2.Response(
             200,
-            json={"choices": [{"message": {"content": '{"results": []}'}}]},
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"results": []}',
+                        },
+                    }
+                ]
+            },
         )
 
     with patch(AI_HTTP_TARGET, new=AIHttpMock(handler)):
         result = await _request_llm(
+            response_model=BatchClassificationResponse,
             messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
+            temperature=0.0,
+            timeout_seconds=10.0,
         )
 
-    assert result == {"results": []}
-    assert len(captured_bodies) == 1, "应只发一次请求（无 strict→fallback 降级）"
-    assert captured_bodies[0]["response_format"] == {"type": "json_object"}
-    assert "strict" not in captured_bodies[0]
+    assert result == BatchClassificationResponse(results=[])
+    assert len(captured_bodies) == 1
+    response_format = captured_bodies[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["additionalProperties"] is False
