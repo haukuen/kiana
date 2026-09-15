@@ -15,9 +15,7 @@ MAX_EXAMPLES_IN_SUMMARY: int = 5        # 总结里典型原文条数
 
 class Config(GroupPermissionMixin, BaseModel):
     word_pulse_plugin_enabled: bool = Field(default=False, description="是否启用词频统计插件")
-    word_pulse_base_url: str = Field(default="", description="OpenAI 兼容接口的 Base URL")
-    word_pulse_api_key: str = Field(default="", description="OpenAI 兼容接口的 API Key", json_schema_extra={"secret": True})
-    word_pulse_model: str = Field(default="", description="OpenAI 兼容接口的模型名称")
+    # AI 档案与模型由 ai_provider 按 caller="word_pulse" 统一解析。
     word_pulse_bucket_retention_days: int = Field(default=30, ge=1, le=365, description="桶保留天数")
     word_pulse_max_messages_per_bucket: int = Field(default=1000, ge=100, le=10000, description="单桶消息上限")
     word_pulse_max_sample_per_cluster: int = Field(default=3, ge=1, le=10, description="每cluster抽样条数")

@@ -1,20 +1,7 @@
 """word_pulse 插件边界条件补充测试。
 
-与现有测试的差异:
-- ``test_word_pulse_analysis.py``:classify_message 基础分支 + classify_batch
-  prompt 白盒 + ``_request_llm`` 走 json_object(bug#3)。
-- ``test_word_pulse_analysis_extra.py``:analysis.py 的 classify_message /
-  uniform_sample / _pick_evenly / merge_results / build_summary_prompt /
-  _compute_day_bucket / compute_or_load_buckets 全套边界。
-- ``test_word_pulse_commands.py``:parse_command 各 action 正常路径 + help。
-- ``test_word_pulse_handlers.py``:handler 端到端。
-
-本文件**只补尚未覆盖的边界**,不重复上述测试:
-1. **ai.py 边界(bug#3 相关)** — ``_request_llm`` 各 HTTP 错误码(401/403/404/
-   500/429)、timeout、ConnectError(消息含原始异常类型名)、非 JSON 响应、空
-   choices、content 非 str、模型输出非合法 JSON;``expand_charsets`` pydantic
-   校验(chars<5 / chars>30 / 缺 charsets 字段 / cluster 名字与种子词不匹配);
-   ``classify_batch`` 空 messages / 超 max_batch_size 分批;``summarize`` 空 ranking。
+覆盖 ``_request_llm`` 的 HTTP/传输/响应错误映射、严格模型解析，以及
+``expand_charsets`` / ``classify_batch`` / ``summarize`` 的业务边界。
 2. **commands.py 边界** — ``parse_command`` 缺参数场景;``parse_query`` 各异常;
    ``resolve_window_days`` value=0 / 超限 / 未知 unit。
 
@@ -22,7 +9,6 @@
 merge_results / build_summary_prompt)已被 ``test_word_pulse_analysis_extra.py``
 完整覆盖,本文件**不重复**这些(避免「为补边界而补」)。
 
-不修改任何源代码、不修改其他测试。
 """
 
 from __future__ import annotations
@@ -30,383 +16,137 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
+from pydantic import BaseModel, ValidationError
 import pytest
 from nonebug import App
+
+from tests.ai_mock_transport import AIHttpMock, AI_HTTP_TARGET, transport_failure
 
 # ═══════════════════════════════════════════════════════════════
 # 辅助:构造 httpx 响应 / 错误
 # ═══════════════════════════════════════════════════════════════
 
 
-def _ok_response(content: str) -> httpx.Response:
+def _ok_response(content: str) -> httpx2.Response:
     """构造 200 + 合法 chat/completions 响应(content 为字符串)。"""
-    return httpx.Response(
+    return httpx2.Response(
         200,
         json={"choices": [{"message": {"content": content}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
 
-def _http_error(status_code: int) -> httpx.HTTPStatusError:
-    """构造 HTTPStatusError,raise_for_status 时会抛。"""
-    resp = httpx.Response(
+def _http_error(status_code: int) -> httpx2.Response:
+    """构造非 2xx 响应；官方 SDK 自己把它变成异常,再由 ai.py 映射。"""
+    return httpx2.Response(
         status_code,
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    return httpx.HTTPStatusError(
-        f"HTTP {status_code}", request=resp.request, response=resp
+        json={"error": {"message": f"HTTP {status_code}"}},
+        request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# 1.1 _request_llm:HTTP 错误码 → 异常类型映射
+# 1.1 _request_llm:错误映射与严格解析
 # ═══════════════════════════════════════════════════════════════
 
 
-@pytest.mark.asyncio
-async def test_request_llm_401_raises_auth_error(app: App) -> None:
-    """HTTP 401 → WordPulseAIAuthError(ai.py:140-141)。"""
-    from src.plugins.word_pulse.ai import WordPulseAIAuthError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=_http_error(401)),
-    ), pytest.raises(WordPulseAIAuthError):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
+class _StrictResponse(BaseModel):
+    results: list[dict]
 
 
-@pytest.mark.asyncio
-async def test_request_llm_403_raises_auth_error(app: App) -> None:
-    """HTTP 403 → WordPulseAIAuthError(ai.py:140-141)。"""
-    from src.plugins.word_pulse.ai import WordPulseAIAuthError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=_http_error(403)),
-    ), pytest.raises(WordPulseAIAuthError):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-@pytest.mark.asyncio
-async def test_request_llm_404_raises_service_error(app: App) -> None:
-    """HTTP 404 → WordPulseAIServiceError(ai.py:142,非 401/403 走默认分支)。"""
-    from src.plugins.word_pulse.ai import WordPulseAIServiceError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=_http_error(404)),
-    ), pytest.raises(WordPulseAIServiceError) as exc_info:
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "404" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_request_llm_500_raises_service_error(app: App) -> None:
-    """HTTP 500 → WordPulseAIServiceError。"""
-    from src.plugins.word_pulse.ai import WordPulseAIServiceError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=_http_error(500)),
-    ), pytest.raises(WordPulseAIServiceError) as exc_info:
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "500" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_request_llm_429_raises_service_error(app: App) -> None:
-    """HTTP 429(限流)→ WordPulseAIServiceError。
-
-    边界:429 不在 {401, 403},走默认 service error 分支。
-    ai.py 的 _to_ai_error 未对 429 特化处理(不限流重试)。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIServiceError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=_http_error(429)),
-    ), pytest.raises(WordPulseAIServiceError) as exc_info:
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "429" in str(exc_info.value)
-
-
-# ═══════════════════════════════════════════════════════════════
-# 1.2 _request_llm:timeout / 网络错误(bug#3 改进点)
-# ═══════════════════════════════════════════════════════════════
-
-
-@pytest.mark.asyncio
-async def test_request_llm_timeout_raises_timeout_error(app: App) -> None:
-    """httpx.TimeoutException → WordPulseAITimeoutError(ai.py:117-118)。"""
-    from src.plugins.word_pulse.ai import WordPulseAITimeoutError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=httpx.TimeoutException("read timeout")),
-    ), pytest.raises(WordPulseAITimeoutError):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-@pytest.mark.asyncio
-async def test_request_llm_connect_error_message_contains_exception_type(app: App) -> None:
-    """httpx.RequestError(ConnectError)→ WordPulseAIServiceError,消息含原始异常类型名。
-
-    bug#3 改进点:ai.py:122 ``f"AI 请求失败: {type(e).__name__}: {e}"``,
-    消息必须包含异常类名(ConnectError),便于日志定位是 DNS / 连接 / 代理问题。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIServiceError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=httpx.ConnectError("dns lookup failed")),
-    ), pytest.raises(WordPulseAIServiceError) as exc_info:
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    msg = str(exc_info.value)
-    assert "ConnectError" in msg, f"消息应含原始异常类型名,实际: {msg}"
-    assert "dns lookup failed" in msg
-
-
-@pytest.mark.asyncio
-async def test_request_llm_read_error_message_contains_exception_type(app: App) -> None:
-    """httpx.ReadError(同为 RequestError 子类)→ 消息含 'ReadError' 类型名。
-
-    边界:bug#3 改进点对**所有** RequestError 子类生效,不限于 ConnectError。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIServiceError, _request_llm
-
-    with patch(
-        "httpx.AsyncClient.post",
-        new=AsyncMock(side_effect=httpx.ReadError("connection reset")),
-    ), pytest.raises(WordPulseAIServiceError) as exc_info:
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "ReadError" in str(exc_info.value)
-
-
-# ═══════════════════════════════════════════════════════════════
-# 1.3 _request_llm:响应格式异常
-# ═══════════════════════════════════════════════════════════════
-
-
-@pytest.mark.asyncio
-async def test_request_llm_non_json_response_raises_response_error(app: App) -> None:
-    """响应 body 不是合法 JSON → WordPulseAIResponseError(ai.py:124-127)。"""
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = httpx.Response(
-        200,
-        text="<html>not json</html>",
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError) as exc_info,
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "不是合法 JSON" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_request_llm_empty_choices_raises_response_error(app: App) -> None:
-    """响应 JSON 但 choices 为空 list → WordPulseAIResponseError。
-
-    边界:_extract_content(ai.py:82-84)``not choices`` → 抛「响应中缺少 choices」。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = httpx.Response(
-        200,
-        json={"choices": []},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError),
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-@pytest.mark.asyncio
-async def test_request_llm_missing_choices_key_raises_response_error(app: App) -> None:
-    """响应 JSON 顶层无 choices key → WordPulseAIResponseError。"""
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = httpx.Response(
-        200,
-        json={"id": "xxx", "object": "chat.completion"},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError),
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-@pytest.mark.asyncio
-async def test_request_llm_content_not_string_raises_response_error(app: App) -> None:
-    """响应 content 不是 str/list(此处要求 str)→ WordPulseAIResponseError。
-
-    边界:_extract_content(ai.py:88-91)``if not isinstance(content, str)`` → 抛。
-    word_pulse 的 _extract_content 比 refine 更严格:不接受 array content,
-    只接受 str。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    # content 是 list(refine 接受,但 word_pulse 拒绝)
-    response = httpx.Response(
-        200,
-        json={"choices": [{"message": {"content": [{"type": "text", "text": "x"}]}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError),
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-@pytest.mark.asyncio
-async def test_request_llm_content_none_raises_response_error(app: App) -> None:
-    """响应 content 为 None → WordPulseAIResponseError。"""
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = httpx.Response(
-        200,
-        json={"choices": [{"message": {"content": None}}]},
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError),
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-
-
-# ═══════════════════════════════════════════════════════════════
-# 1.4 _request_llm:content(模型输出)JSON 解析
-# ═══════════════════════════════════════════════════════════════
-
-
-@pytest.mark.asyncio
-async def test_request_llm_valid_json_content_returns_dict(app: App) -> None:
-    """模型输出 content 是合法 JSON 字符串 → 解析为 dict 返回。
-
-    边界:ai.py:132-135,``json.loads(content)`` 成功,返回 dict。
-    """
+async def _call_test_request():
     from src.plugins.word_pulse.ai import _request_llm
 
+    return await _request_llm(
+        response_model=_StrictResponse,
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0.0,
+        timeout_seconds=10.0,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status, error_name",
+    [
+        (401, "WordPulseAIAuthError"),
+        (403, "WordPulseAIAuthError"),
+        (404, "WordPulseAIServiceError"),
+        (429, "WordPulseAIServiceError"),
+        (500, "WordPulseAIServiceError"),
+    ],
+)
+async def test_request_llm_maps_http_errors(app: App, status: int, error_name: str) -> None:
+    from src.plugins.word_pulse import ai
+
+    error_type = getattr(ai, error_name)
+    with (
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: _http_error(status))),
+        pytest.raises(error_type) as exc_info,
+    ):
+        await _call_test_request()
+    assert str(status) in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transport_error, expected_type",
+    [
+        (httpx2.TimeoutException("read timeout"), "WordPulseAITimeoutError"),
+        (httpx2.ConnectError("dns lookup failed"), "WordPulseAIServiceError"),
+        (httpx2.ReadError("connection reset"), "WordPulseAIServiceError"),
+    ],
+)
+async def test_request_llm_maps_transport_errors(
+    app: App, transport_error: Exception, expected_type: str
+) -> None:
+    from src.plugins.word_pulse import ai
+
+    error_type = getattr(ai, expected_type)
+    with (
+        patch(
+            AI_HTTP_TARGET,
+            new=AIHttpMock(transport_failure(transport_error)),
+        ),
+        pytest.raises(error_type) as exc_info,
+    ):
+        await _call_test_request()
+    if not isinstance(transport_error, httpx2.TimeoutException):
+        assert type(transport_error).__name__ in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx2.Response(200, text="<html>not json</html>", headers={"content-type": "text/html"}),
+        httpx2.Response(200, json={"choices": []}),
+        _ok_response("not json"),
+        _ok_response('{"wrong": []}'),
+    ],
+)
+async def test_request_llm_rejects_invalid_strict_responses(
+    app: App, response: httpx2.Response
+) -> None:
+    from src.plugins.word_pulse.ai import WordPulseAIResponseError
+
+    with (
+        patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)),
+        pytest.raises(WordPulseAIResponseError),
+    ):
+        await _call_test_request()
+
+
+@pytest.mark.asyncio
+async def test_request_llm_returns_validated_model(app: App) -> None:
     payload = {"results": [{"id": 1, "cluster": "茅台"}]}
     response = _ok_response(json.dumps(payload, ensure_ascii=False))
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
-        result = await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert result == payload
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(lambda request: response)):
+        result = await _call_test_request()
 
-
-@pytest.mark.asyncio
-async def test_request_llm_invalid_json_content_raises_response_error(app: App) -> None:
-    """模型输出 content 不是合法 JSON → WordPulseAIResponseError。
-
-    边界:ai.py 中 ``_request_llm`` 先用 ``extract_json_text`` 剥围栏并截取
-    ``{...}`` 区间，再 ``json.loads``。两条失败路径都应转为
-    ``WordPulseAIResponseError``：
-      - 找不到 ``{...}`` 区间 → 「模型输出中没有 JSON 对象」
-      - 截取到区间但 ``json.loads`` 仍失败 → 「模型输出不是合法 JSON」
-    本用例覆盖后者：content 含花括号但结构非法。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = _ok_response("{这不是 合法 JSON}")
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError) as exc_info,
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "模型输出不是合法 JSON" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_request_llm_no_json_braces_raises_response_error(app: App) -> None:
-    """模型输出 content 完全不含 ``{...}`` → WordPulseAIResponseError。
-
-    边界:ai.py ``extract_json_text`` 在剥离围栏后 ``find('{')`` 失败 →
-    抛 WordPulseAIResponseError「模型输出中没有 JSON 对象」。
-    覆盖纯文本/只有围栏没有 JSON 对象的降级路径。
-    """
-    from src.plugins.word_pulse.ai import WordPulseAIResponseError, _request_llm
-
-    response = _ok_response("这不是 JSON 格式的纯文本")
-    with (
-        patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)),
-        pytest.raises(WordPulseAIResponseError) as exc_info,
-    ):
-        await _request_llm(
-            base_url="https://example.com", api_key="k", model="m",
-            messages=[{"role": "user", "content": "hi"}],
-            temperature=0.0, timeout_seconds=10.0,
-        )
-    assert "模型输出中没有 JSON 对象" in str(exc_info.value)
-
+    assert isinstance(result, _StrictResponse)
+    assert result.model_dump() == payload
 
 # ═══════════════════════════════════════════════════════════════
 # 1.5 expand_charsets:pydantic schema 校验
@@ -414,14 +154,18 @@ async def test_request_llm_no_json_braces_raises_response_error(app: App) -> Non
 
 
 def _build_expand_charsets_patch(returned_json: dict):
-    """patch _request_llm 让 expand_charsets 拿到指定的 parsed dict。
+    """模拟共享层按调用方传入的 Pydantic 契约完成校验。"""
+    from src.plugins.word_pulse.ai import WordPulseAIResponseError
 
-    expand_charsets 内部 try CharsetExpansionResponse.model_validate(parsed),
-    我们绕过 HTTP 直接喂 parsed,聚焦 pydantic 校验边界。
-    """
+    async def validate(*, response_model, **_):
+        try:
+            return response_model.model_validate(returned_json)
+        except ValidationError as e:
+            raise WordPulseAIResponseError(f"返回格式异常: {e}") from e
+
     return patch(
         "src.plugins.word_pulse.ai._request_llm",
-        new=AsyncMock(return_value=returned_json),
+        new=AsyncMock(side_effect=validate),
     )
 
 
@@ -438,7 +182,6 @@ async def test_expand_charsets_chars_less_than_5_raises(app: App) -> None:
         {"charsets": [{"cluster": "茅台", "chars": ["茅", "台", "酒"]}]}
     ), pytest.raises(WordPulseAIResponseError) as exc_info:
         await expand_charsets(
-            base_url="x", api_key="x", model="x",
             seeds=["茅台"], theme="炒股",
         )
     assert "格式异常" in str(exc_info.value)
@@ -457,7 +200,6 @@ async def test_expand_charsets_chars_more_than_30_raises(app: App) -> None:
         {"charsets": [{"cluster": "茅台", "chars": too_many}]}
     ), pytest.raises(WordPulseAIResponseError):
         await expand_charsets(
-            base_url="x", api_key="x", model="x",
             seeds=["茅台"], theme="炒股",
         )
 
@@ -475,7 +217,6 @@ async def test_expand_charsets_missing_charsets_field_raises(app: App) -> None:
         WordPulseAIResponseError
     ):
         await expand_charsets(
-            base_url="x", api_key="x", model="x",
             seeds=["茅台"], theme="炒股",
         )
 
@@ -497,7 +238,6 @@ async def test_expand_charsets_cluster_name_mismatch_seed_still_succeeds(app: Ap
         ]}
     ):
         result = await expand_charsets(
-            base_url="x", api_key="x", model="x",
             seeds=["茅台"], theme="炒股",
         )
     # key 是 LLM 给的名字,不是种子词
@@ -525,7 +265,6 @@ async def test_classify_batch_empty_messages_returns_empty_without_llm_call(
         new=AsyncMock(side_effect=AssertionError("空 messages 不该调 LLM")),
     ):
         result = await classify_batch(
-            base_url="x", api_key="x", model="x",
             messages=[], clusters=[{"name": "茅台"}], theme_name="炒股",
         )
     assert result == []
@@ -546,18 +285,19 @@ async def test_classify_batch_over_max_batch_size_splits_into_chunks(app: App) -
     async def fake_request(*, messages, **_):
         nonlocal call_count
         call_count += 1
-        # 从 user message 里解析 [id] 还原 results
-        user_msg = messages[1]["content"]
-        ids = []
-        for line in user_msg.split("\n"):
-            if line.startswith("[") and "]" in line:
-                id_str = line[1:line.index("]")]
-                ids.append(int(id_str))
-        return {"results": [{"id": mid, "cluster": "茅台"} for mid in ids]}
+        payload = json.loads(messages[0]["content"])
+        ids = [item["id"] for item in payload["messages"]]
+        assert 1 <= len(ids) <= 2
+        assert payload["theme"] == "炒股"
+        assert payload["clusters"] == [{"name": "茅台", "aliases": []}]
+        from src.plugins.word_pulse.ai import BatchClassificationResponse
+
+        return BatchClassificationResponse.model_validate(
+            {"results": [{"id": mid, "cluster": "茅台"} for mid in ids]}
+        )
 
     with patch("src.plugins.word_pulse.ai._request_llm", new=AsyncMock(side_effect=fake_request)):
         result = await classify_batch(
-            base_url="x", api_key="x", model="x",
             messages=[(i, f"消息{i}") for i in range(1, 6)],
             clusters=[{"name": "茅台"}], theme_name="炒股",
             max_batch_size=2,
@@ -589,10 +329,10 @@ async def test_summarize_empty_ranking_still_succeeds(app: App) -> None:
     }
     with patch(
         "src.plugins.word_pulse.ai._request_llm",
-        new=AsyncMock(return_value=empty_payload),
+        new=AsyncMock(return_value=SummaryResult.model_validate(empty_payload)),
     ):
         result = await summarize(
-            base_url="x", api_key="x", model="x", prompt="随便",
+            prompt="随便",
         )
     assert isinstance(result, SummaryResult)
     assert result.ranking == []

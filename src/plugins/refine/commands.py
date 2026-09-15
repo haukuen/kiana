@@ -43,7 +43,6 @@ from .config import Config
 from .db import (
     RefineSubscription,
     add_subscription,
-    conflict_on_label,
     conflict_on_target,
     delete_subscription,
     get_result,
@@ -297,7 +296,7 @@ async def _subscribe(event: GroupMessageEvent, args: Message = CommandArg()) -> 
             f"该目标已被订阅，标签为「{dup_target.label}」"
         )
         return
-    dup_label = await conflict_on_label(group_id, label)
+    dup_label = await get_subscription_by_label(group_id, label)
     if dup_label is not None:
         await refine_subscribe.finish(f"标签「{label}」已被使用，请换一个")
 
@@ -364,7 +363,7 @@ async def _lazy(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
         return
 
     try:
-        validate_ai_config(config)
+        validate_ai_config()
     except RefineConfigError as e:
         await refine_lazy.finish(f"❌ AI 配置缺失：{e}")
         return
@@ -414,7 +413,7 @@ async def _force(event: GroupMessageEvent, args: Message = CommandArg()) -> None
         return
 
     try:
-        validate_ai_config(config)
+        validate_ai_config()
     except RefineConfigError as e:
         await refine_force.finish(f"❌ AI 配置缺失：{e}")
         return

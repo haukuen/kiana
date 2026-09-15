@@ -1,14 +1,12 @@
 """word_pulse 本地真实 LLM 联调 smoke 脚本。
 
-用法（不接入真 QQ，用 NoneBug mock bot 模式 + 真实 LLM API）：
+用法（不接入真 QQ，使用合成群消息与真实 LLM API）：
 
-    export WORD_PULSE_BASE_URL="https://api.exusiai.top/v1"
-    export WORD_PULSE_API_KEY="sk-..."
-    export WORD_PULSE_MODEL="gpt-4o-mini"   # 或其他 OpenAI 兼容模型
+    先配置 ai_providers、ai_default_model 或 ai_plugin_models["word_pulse"]。
     uv run python scripts/word_pulse_smoke.py
 
 验证内容：
-  1. 注册主题 → 真实 LLM 字符集扩展（看字符是否相关、schema strict 是否被接受）
+  1. 注册主题 → 真实 LLM 字符集扩展（看字符是否相关、JSON mode 是否被接受）
   2. 预筛真实感群消息（看强/弱/灰区分布）
   3. 灰区批量分类 → 真实 LLM 分类（看准确率）
   4. 汇总 → 真实 LLM 总结（看 trend/examples 质量）
@@ -39,21 +37,15 @@ for suffix in ("", "-shm", "-wal"):
     Path(f"{_TMP_DB}{suffix}").unlink(missing_ok=True)
 
 
-def _check_env() -> tuple[str, str, str]:
-    base = os.environ.get("WORD_PULSE_BASE_URL", "").rstrip("/")
-    key = os.environ.get("WORD_PULSE_API_KEY", "")
-    model = os.environ.get("WORD_PULSE_MODEL", "")
-    missing = [n for n, v in [("WORD_PULSE_BASE_URL", base), ("WORD_PULSE_API_KEY", key), ("WORD_PULSE_MODEL", model)] if not v]
-    if missing:
-        print(f"❌ 缺少环境变量: {', '.join(missing)}", file=sys.stderr)
-        print("示例:", file=sys.stderr)
-        print("  export WORD_PULSE_BASE_URL='https://api.exusiai.top/v1'", file=sys.stderr)
-        print("  export WORD_PULSE_API_KEY='sk-...'", file=sys.stderr)
-        print("  export WORD_PULSE_MODEL='gpt-4o-mini'", file=sys.stderr)
+def _check_ai_config() -> str:
+    from src.plugins.ai_provider import resolve
+    from src.plugins.word_pulse.ai import CALLER
+
+    target = resolve(CALLER)
+    if target.missing:
+        print(f"❌ 词频 AI 配置不完整: {target.missing[0]}", file=sys.stderr)
         sys.exit(1)
-    if not base.endswith("/v1"):
-        print(f"⚠ base_url 似乎不以 /v1 结尾: {base}（脚本会自动补 /chat/completions）", file=sys.stderr)
-    return base, key, model
+    return target.model
 
 
 # ── 真实感测试消息（覆盖三类：精确命中、灰区、无关）──────────────────────────
@@ -107,7 +99,7 @@ SAMPLE_MESSAGES: list[tuple[int, str, str, int, int]] = [
 ]
 
 
-async def _init_nonebot(base_url: str, api_key: str, model: str) -> None:
+async def _init_nonebot() -> None:
     """初始化 NoneBot 并加载 word_pulse + message_archive 插件。"""
     import nonebot
     from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
@@ -115,9 +107,6 @@ async def _init_nonebot(base_url: str, api_key: str, model: str) -> None:
     nonebot.init(
         driver="~fastapi",
         word_pulse_plugin_enabled=True,
-        word_pulse_base_url=base_url,
-        word_pulse_api_key=api_key,
-        word_pulse_model=model,
         word_pulse_group_mode="all",
         superusers=["999"],
     )
@@ -196,13 +185,10 @@ async def _run_pipeline(group_id: int = 654321) -> None:
     tid = await upsert_theme(str(group_id), theme_name)
     await replace_clusters(tid, seeds)
     print(f"  主题已创建 (theme_id={tid}), seeds={seeds}")
-    print(f"  调用 LLM 扩展字符集 (model={config.word_pulse_model})...")
+    print(f"  调用 LLM 扩展字符集 (model={_check_ai_config()})...")
 
     try:
         charsets = await expand_charsets(
-            base_url=config.word_pulse_base_url,
-            api_key=config.word_pulse_api_key,
-            model=config.word_pulse_model,
             seeds=seeds,
             theme=theme_name,
             temperature=CLASSIFY_TEMPERATURE,
@@ -278,9 +264,6 @@ async def _run_pipeline(group_id: int = 654321) -> None:
         print("=" * 70)
         try:
             grey_results = await classify_batch(
-                base_url=config.word_pulse_base_url,
-                api_key=config.word_pulse_api_key,
-                model=config.word_pulse_model,
                 messages=grey,
                 clusters=[{"id": i, "name": n} for i, n in enumerate(cluster_names)],
                 theme_name=theme_name,
@@ -309,8 +292,6 @@ async def _run_pipeline(group_id: int = 654321) -> None:
         clusters=[{"id": i, "name": n} for i, n in enumerate(cluster_names)],
         char_pool=char_pool, cluster_terms=cluster_terms,
         day_range=2,
-        base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
-        model=config.word_pulse_model,
         max_messages_per_bucket=config.word_pulse_max_messages_per_bucket,
         max_sample_per_cluster=config.word_pulse_max_sample_per_cluster,
         temperature=CLASSIFY_TEMPERATURE,
@@ -348,9 +329,6 @@ async def _run_pipeline(group_id: int = 654321) -> None:
 
     try:
         summary = await summarize(
-            base_url=config.word_pulse_base_url,
-            api_key=config.word_pulse_api_key,
-            model=config.word_pulse_model,
             prompt=prompt,
             temperature=SUMMARY_TEMPERATURE,
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -384,14 +362,13 @@ async def _run_pipeline(group_id: int = 654321) -> None:
 
 
 async def main() -> None:
-    base, key, model = _check_env()
+    await _init_nonebot()
+    model = _check_ai_config()
     print("🚀 word_pulse smoke 联调")
-    print(f"   base_url: {base}")
     print(f"   model:    {model}")
     print(f"   db:       {_TMP_DB}")
     print(f"   样本消息: {len(SAMPLE_MESSAGES)} 条（今日 + 昨日）")
 
-    await _init_nonebot(base, key, model)
     seeded = await _seed_messages()
     print(f"   已写入 message_archive: {seeded} 条")
 

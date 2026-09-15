@@ -283,7 +283,7 @@ async def test_compute_day_bucket_no_messages_saves_empty(app: App) -> None:
         clusters=[{"name": "茅台", "aliases": []}],
         char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
         max_messages_per_bucket=100, max_sample_per_cluster=3,
-        base_url="x", api_key="x", model="x", temperature=0.0, timeout=10.0,
+        temperature=0.0, timeout=10.0,
     )
     assert bucket["total_messages"] == 0
     assert bucket["counts"] == {"_other": 0, "_skipped": 0}
@@ -325,7 +325,7 @@ async def test_compute_day_bucket_with_messages_no_grey(app: App) -> None:
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
             max_messages_per_bucket=100, max_sample_per_cluster=3,
-            base_url="x", api_key="x", model="x", temperature=0.0, timeout=10.0,
+            temperature=0.0, timeout=10.0,
         )
     assert bucket["total_messages"] == 2
     assert bucket["counts"]["茅台"] == 2
@@ -356,7 +356,7 @@ async def test_compute_day_bucket_with_grey_calls_classify(app: App) -> None:
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"跌", "茅"}, cluster_terms={"茅台": {"茅台"}},
             max_messages_per_bucket=100, max_sample_per_cluster=3,
-            base_url="x", api_key="x", model="x", temperature=0.0, timeout=10.0,
+            temperature=0.0, timeout=10.0,
         )
     assert bucket["total_messages"] == 1
     assert bucket["counts"]["茅台"] == 1
@@ -388,7 +388,7 @@ async def test_compute_day_bucket_samples_when_over_max(app: App) -> None:
         clusters=[{"name": "茅台", "aliases": []}],
         char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
         max_messages_per_bucket=2, max_sample_per_cluster=3,
-        base_url="x", api_key="x", model="x", temperature=0.0, timeout=10.0,
+        temperature=0.0, timeout=10.0,
     )
     # 被截断到 max_messages_per_bucket=2
     assert bucket["total_messages"] == 2
@@ -431,7 +431,7 @@ async def test_compute_or_load_buckets_history_day_uses_cache(app: App) -> None:
             group_id=gid, theme_id=tid, theme_name=theme_name,
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
-            day_range=2, base_url="x", api_key="x", model="x",
+            day_range=2,
             max_messages_per_bucket=100, max_sample_per_cluster=3,
             temperature=0.0, timeout=10.0,
             today_bucket_fresh_seconds=300,
@@ -470,7 +470,7 @@ async def test_compute_or_load_buckets_today_fresh_uses_cache(app: App) -> None:
             group_id=gid, theme_id=tid, theme_name=theme_name,
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
-            day_range=1, base_url="x", api_key="x", model="x",
+            day_range=1,
             max_messages_per_bucket=100, max_sample_per_cluster=3,
             temperature=0.0, timeout=10.0,
             today_bucket_fresh_seconds=300,
@@ -508,7 +508,7 @@ async def test_compute_or_load_buckets_today_stale_recomputes(app: App) -> None:
             group_id=gid, theme_id=tid, theme_name=theme_name,
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
-            day_range=1, base_url="x", api_key="x", model="x",
+            day_range=1,
             max_messages_per_bucket=100, max_sample_per_cluster=3,
             temperature=0.0, timeout=10.0,
             today_bucket_fresh_seconds=300,
@@ -534,7 +534,7 @@ async def test_compute_or_load_buckets_no_cache_computes(app: App) -> None:
             group_id=gid, theme_id=tid, theme_name=theme_name,
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
-            day_range=1, base_url="x", api_key="x", model="x",
+            day_range=1,
             max_messages_per_bucket=100, max_sample_per_cluster=3,
             temperature=0.0, timeout=10.0,
             today_bucket_fresh_seconds=300,
@@ -564,7 +564,7 @@ async def test_compute_or_load_buckets_multi_day_reverses(app: App) -> None:
             group_id=gid, theme_id=tid, theme_name=theme_name,
             clusters=[{"name": "茅台", "aliases": []}],
             char_pool={"茅"}, cluster_terms={"茅台": {"茅台"}},
-            day_range=3, base_url="x", api_key="x", model="x",
+            day_range=3,
             max_messages_per_bucket=100, max_sample_per_cluster=3,
             temperature=0.0, timeout=10.0,
             today_bucket_fresh_seconds=300,

@@ -21,19 +21,8 @@ class Config(BaseModel):
         description="黑名单群组(仅在 blacklist 模式生效)",
     )
 
-    a_share_sentiment_base_url: str = Field(
-        default="",
-        description="OpenAI 兼容接口的 Base URL",
-    )
-    a_share_sentiment_api_key: str = Field(
-        default="",
-        description="OpenAI 兼容接口的 API Key",
-        json_schema_extra={"secret": True},
-    )
-    a_share_sentiment_model: str = Field(
-        default="",
-        description="OpenAI 兼容接口的模型名称",
-    )
+    # 端点与模型由 ai_provider 前置插件统一持有（ai_providers / ai_default_model /
+    # ai_plugin_models，见 src/plugins/ai_provider/config.py），这里只留行为参数。
     a_share_sentiment_timeout_seconds: float = Field(
         default=30.0,
         gt=0,

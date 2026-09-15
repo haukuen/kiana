@@ -2,14 +2,16 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from nonebot import get_plugin_config, logger, on_regex
+from nonebot import get_plugin_config, logger, on_regex, require
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageEvent
 from nonebot.plugin import PluginMetadata
 
 from ..group_permission import create_group_rule
 from ..message_archive.db import fetch_group_messages_by_time_range
 from .ai import (
+    CALLER,
     SentimentAIAuthError,
+    SentimentAIConfigError,
     SentimentAIResponseError,
     SentimentAIServiceError,
     SentimentAITimeoutError,
@@ -34,6 +36,7 @@ __plugin_meta__ = PluginMetadata(
 )
 
 config: Config = get_plugin_config(Config)
+_ai = require("src.plugins.ai_provider")
 
 a_share_sentiment_group_rule = create_group_rule(
     config_getter=lambda: config,
@@ -106,13 +109,9 @@ def mark_cooldown(group_id: int) -> None:
 
 
 def validate_runtime_config() -> str | None:
-    if not config.a_share_sentiment_base_url.strip():
-        return "A股情绪插件未配置 base_url"
-    if not config.a_share_sentiment_api_key.strip():
-        return "A股情绪插件未配置 api_key"
-    if not config.a_share_sentiment_model.strip():
-        return "A股情绪插件未配置 model"
-    return None
+    """返回配置缺失的用户可见提示；端点与模型由 ai_provider 前置插件解析。"""
+    missing = _ai.resolve(CALLER).missing
+    return f"A股情绪插件：{missing[0]}" if missing else None
 
 
 async def fetch_analysis_context(event: GroupMessageEvent) -> tuple[DayAnalysis, list[DayAnalysis]]:
@@ -230,13 +229,13 @@ async def request_analysis_or_finish(
 ) -> SentimentAnalysisResult:
     try:
         return await request_sentiment_analysis(
-            base_url=config.a_share_sentiment_base_url,
-            api_key=config.a_share_sentiment_api_key,
-            model=config.a_share_sentiment_model,
             timeout_seconds=config.a_share_sentiment_timeout_seconds,
             temperature=config.a_share_sentiment_temperature,
             prompt_payload=prompt_payload,
         )
+    except SentimentAIConfigError as e:
+        logger.error(f"[A股情绪] AI 配置错误: {e}")
+        await a_share_sentiment.finish(f"A股情绪插件配置错误：{e}")
     except SentimentAITimeoutError:
         await a_share_sentiment.finish("A股情绪分析超时，请稍后重试")
     except SentimentAIAuthError:

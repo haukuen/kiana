@@ -14,7 +14,9 @@ from nonebot.plugin import PluginMetadata
 from src.plugins.group_permission import create_group_rule
 
 from .ai import (
+    CALLER,
     WordPulseAIAuthError,
+    WordPulseAIConfigError,
     WordPulseAIError,
     WordPulseAIResponseError,
     WordPulseAIServiceError,
@@ -53,6 +55,7 @@ from .db import (
 )
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
+_ai = require("src.plugins.ai_provider")
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -143,13 +146,8 @@ def _mark_cooldown(gid: int) -> None:
 
 
 def _validate_config() -> str | None:
-    if not config.word_pulse_base_url.strip():
-        return "词频插件未配置 base_url"
-    if not config.word_pulse_api_key.strip():
-        return "词频插件未配置 api_key"
-    if not config.word_pulse_model.strip():
-        return "词频插件未配置 model"
-    return None
+    missing = _ai.resolve(CALLER).missing
+    return f"词频插件 AI 配置不完整：{missing[0]}" if missing else None
 
 
 def _is_admin(event: GroupMessageEvent) -> bool:
@@ -171,8 +169,7 @@ async def _run_expand_or_degrade(*, theme_id: int, seeds: list[str], theme_name:
     """调用 expand_charsets 并保存；失败时返回降级提示文案，成功返回 None。"""
     try:
         charsets = await expand_charsets(
-            base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
-            model=config.word_pulse_model, seeds=seeds, theme=theme_name,
+            seeds=seeds, theme=theme_name,
             temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
         await save_charsets(theme_id, charsets)
@@ -263,8 +260,7 @@ async def _handle_append(event: GroupMessageEvent, cmd) -> None:
     new_seeds = [cmd.seeds[i] for i in range(len(cmd.seeds)) if i < len(new_ids)]
     try:
         charsets = await expand_charsets(
-            base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
-            model=config.word_pulse_model, seeds=new_seeds, theme=cmd.theme,
+            seeds=new_seeds, theme=cmd.theme,
             temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
         await save_charsets(theme["id"], charsets)
@@ -403,10 +399,11 @@ async def _run_summary(*, query, theme: dict, clusters: list[dict], buckets: lis
     )
     try:
         summary = await summarize(
-            base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key,
-            model=config.word_pulse_model, prompt=prompt,
+            prompt=prompt,
             temperature=SUMMARY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,
         )
+    except WordPulseAIConfigError as e:
+        return f"词频插件 AI 配置不完整：{e}"
     except WordPulseAITimeoutError:
         return "AI 总结超时，请稍后重试"
     except WordPulseAIAuthError:
@@ -481,7 +478,6 @@ async def _compute_buckets(ge: GroupMessageEvent, query, theme: dict, clusters: 
         group_id=str(ge.group_id), theme_id=theme["id"], theme_name=query.theme,
         clusters=clusters_for_classify, char_pool=char_pool, cluster_terms=cluster_terms,
         day_range=total_days,
-        base_url=config.word_pulse_base_url, api_key=config.word_pulse_api_key, model=config.word_pulse_model,
         max_messages_per_bucket=config.word_pulse_max_messages_per_bucket,
         max_sample_per_cluster=config.word_pulse_max_sample_per_cluster,
         temperature=CLASSIFY_TEMPERATURE, timeout=REQUEST_TIMEOUT_SECONDS,

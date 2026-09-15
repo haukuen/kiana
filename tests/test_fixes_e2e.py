@@ -4,13 +4,11 @@
 1. **bug#1**:`炼化这个功能怎么用`(无空格粘连)不应触发任何炼化命令 — force_whitespace=True
 2. **bug#1 对照**:`炼化 <不存在标签>`(有空格)正常进入 handler 并回「未找到标签」
 3. **bug#2**:集合订阅炼化时,所有成员的发言都被采到 prompt 里(per-member 配额)
-4. **bug#3**:word_pulse 的 AI 调用走 `response_format: {type: "json_object"}`,
-   不带 strict json_schema(通过 mock httpx 捕获请求体验证)
+4. **strict output**:word_pulse 把 Pydantic 业务模型作为 JSON Schema 发送
 5. **help**:`词频 帮助` 与 `词频 help` 都能触发并返回完整帮助文案
 
 复用 conftest.py 的 `App` fixture 与 autouse 的 `reset_*` 表清理 fixture。
-辅助函数(`_make_group_event` / `_expect_bot_not_muted` / `_fake_ai_response` /
-`_fake_dt`)从 test_refine_integration.py 拷贝过来,避免跨文件 import 测试辅助。
+事件、API 预期和响应工厂复用 tests.refine_helpers。
 
 不修改任何源代码、不修改其他测试。
 """
@@ -18,81 +16,23 @@
 from __future__ import annotations
 
 import json as json_lib
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
+from tests.ai_mock_transport import AI_HTTP_TARGET, AIHttpMock
 import pytest
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    GroupMessageEvent,
     Message,
 )
-from nonebot.adapters.onebot.v11.event import Sender
 from nonebug import App
 
-# ── 本地辅助工厂(从 test_refine_integration.py 拷贝,保持一致) ──
-
-
-def _make_group_event(
-    message: Message | str,
-    *,
-    message_id: int = 1,
-    user_id: int = 100001,
-    group_id: int = 200001,
-    self_id: int = 987654321,
-    nickname: str = "测试用户",
-    card: str = "",
-    event_time: int | None = None,
-) -> GroupMessageEvent:
-    actual = message if isinstance(message, Message) else Message(message)
-    return GroupMessageEvent(
-        time=event_time or int(datetime.now().timestamp()),
-        self_id=self_id,
-        post_type="message",
-        sub_type="normal",
-        user_id=user_id,
-        message_type="group",
-        group_id=group_id,
-        message_id=message_id,
-        message=actual,
-        original_message=actual.copy(),
-        raw_message=str(actual),
-        font=0,
-        sender=Sender(user_id=user_id, nickname=nickname, card=card, role="member"),
-    )
-
-
-def _expect_bot_not_muted(
-    ctx, group_id: int = 200001, self_id: int = 987654321
-) -> None:
-    """声明 bot 不被禁言 — should_call_send 之前必须调用。
-
-    项目 ``check_bot_mute_status`` preprocessor 在群消息场景下会查 mute cache,
-    触发 get_group_member_info API。未先声明会导致 nonebug 报意外 API 调用。
-    """
-    ctx.should_call_api(
-        "get_group_member_info",
-        {"group_id": group_id, "user_id": self_id, "no_cache": True},
-        result={"shut_up_timestamp": 0},
-    )
-
-
-def _fake_ai_response(content: str = "AI 生成的总结") -> httpx.Response:
-    return httpx.Response(
-        200,
-        json={
-            "choices": [
-                {"message": {"role": "assistant", "content": content}},
-            ],
-        },
-        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
-    )
-
-
-def _fake_dt():
-    """返回一个 strftime 始终输出 'T' 的假 datetime 实例。"""
-    return type("FakeDS", (), {"strftime": lambda self, fmt: "T"})()
+from tests.refine_helpers import (
+    expect_bot_not_muted as _expect_bot_not_muted,
+    fake_ai_response as _fake_ai_response,
+    fake_dt as _fake_dt,
+    make_group_event as _make_group_event,
+)
 
 
 def _configure_refine_plugin_for_e2e(rp) -> None:
@@ -105,9 +45,6 @@ def _configure_refine_plugin_for_e2e(rp) -> None:
     rp.config.refine_group_mode = "all"
     rp.config.refine_group_whitelist = []
     rp.config.refine_group_blacklist = []
-    rp.config.refine_ai_base_url = "https://example.com/v1"
-    rp.config.refine_ai_api_key = "sk-test"
-    rp.config.refine_ai_model = "gpt-test"
     rp.config.refine_ai_timeout_seconds = 30.0
     rp.config.refine_ai_temperature = 0.3
     rp.config.refine_result_fresh_seconds = 86400
@@ -186,7 +123,7 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
     """bug#2: 集合炼化时所有成员的发言都被采到 prompt。
 
     场景:集合 3 成员各发 5 条,共 15 条,走「订阅 → 炼化」完整命令链路。
-    通过 mock httpx.AsyncClient.post 捕获 AI 请求体,反查 user prompt
+    通过共享 SDK 传输 mock 捕获 AI 请求体,反查 user prompt
     包含三个成员各自的发言。
 
     说明:15 条远小于 max_messages=200,即便旧实现(per-member 配额前的共享
@@ -244,13 +181,13 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
             result={"message_id": 201},
         )
 
-    # 4. 炼化命令 — patch httpx 捕获 prompt
+    # 4. 炼化命令 — 在 SDK 传输层捕获 prompt
     captured_prompt: list[str] = []
 
-    async def capture_post(url, headers=None, json=None, **kwargs):
-        if json and "messages" in json:
-            # messages[1] 是 user prompt,内含采集到的原文
-            captured_prompt.append(json["messages"][1]["content"])
+    def capture_handler(request):
+        body = json_lib.loads(request.content)
+        if "messages" in body:
+            captured_prompt.append(body["messages"][1]["content"])
         return _fake_ai_response("三人综合总结")
 
     lazy_event = _make_group_event(
@@ -262,10 +199,7 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
 
     fake_dt = _fake_dt()
     with (
-        patch(
-            "httpx.AsyncClient.post",
-            new=AsyncMock(side_effect=capture_post),
-        ),
+        patch(AI_HTTP_TARGET, new=AIHttpMock(capture_handler)),
         patch.object(commands, "datetime") as mock_dt,
         patch("time.time", return_value=float(fixed_now)),
     ):
@@ -304,35 +238,22 @@ async def test_bug2_collection_refine_covers_all_members(app: App) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 场景 4: bug#3 — word_pulse AI 用 json_object 而非 strict json_schema
-# ═══════════════════════════════════════════════════════════════
-
-
+# 场景 4: word_pulse 使用严格 JSON Schema
 @pytest.mark.asyncio
-async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
-    """bug#3: word_pulse AI 调用直接用 response_format=json_object,不走 strict。
-
-    修复背景:原 strict json_schema + json_object 两级降级对部分上游 OpenAI
-    兼容网关不兼容(strict 首次即 400),修复为单一 json_object + pydantic 校验。
-
-    验证:patch httpx.AsyncClient.post 捕获请求体,断言:
-    - response_format == {"type": "json_object"}
-    - 不带 strict 字段
-    - response_format 内不含 json_schema 字段
-
-    直接调用 expand_charsets 绕过 matcher,聚焦 AI 调用层。
-    """
+async def test_word_pulse_uses_strict_json_schema(app: App) -> None:
+    """字符集扩展必须把 Pydantic 契约交给 SDK，而不是只请求 JSON 对象。"""
     from src.plugins.word_pulse.ai import expand_charsets  # noqa: PLC0415
 
     captured_body: dict = {}
 
-    async def mock_post(url, headers=None, json=None, **kwargs):
-        captured_body.update(json or {})
-        return httpx.Response(
+    def word_pulse_handler(request: httpx2.Request) -> httpx2.Response:
+        captured_body.update(json_lib.loads(request.content))
+        return httpx2.Response(
             200,
             json={
                 "choices": [
                     {
+                        "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
                             "content": json_lib.dumps(
@@ -345,37 +266,22 @@ async def test_bug3_word_pulse_uses_json_object_not_strict(app: App) -> None:
                                     ]
                                 }
                             ),
-                        }
+                        },
                     }
                 ]
             },
-            request=httpx.Request("POST", url),
         )
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=mock_post)):
-        result = await expand_charsets(
-            base_url="https://example.com/v1",
-            api_key="sk-test",
-            model="gpt-test",
-            seeds=["测试种子"],
-            theme="测试主题",
-        )
+    with patch(AI_HTTP_TARGET, new=AIHttpMock(word_pulse_handler)):
+        result = await expand_charsets(seeds=["测试种子"], theme="测试主题")
 
-    # expand_charsets 返回 {cluster: chars} 字典
     assert "测试种子" in result
-
-    # ── 关键断言:response_format 正确,不走 strict ──
-    rf = captured_body.get("response_format")
-    assert isinstance(rf, dict), f"response_format 必须是 dict,实际: {rf!r}"
-    assert rf == {"type": "json_object"}, (
-        f"response_format 必须是 {{'type': 'json_object'}},实际: {rf}"
-    )
-    # 顶层不能有 strict 痕迹
-    assert "strict" not in captured_body, (
-        f"请求体不应有 strict 字段,实际 keys: {list(captured_body.keys())}"
-    )
-    # response_format 内不能有 json_schema(那是 strict 模式专用的)
-    assert "json_schema" not in rf, f"response_format 不应含 json_schema: {rf}"
+    response_format = captured_body["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert "charsets" in schema["required"]
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -15,6 +15,9 @@ dependencies = [
     "matplotlib>=3.10.1",
     "numpy>=2.3.0",
     "akshare>=1.17.44",
+    "openai>=3.13.0",
+    "anthropic>=1.5.0",
+    "httpx2>=2.12.0",
 ]
 
 [tool.nonebot]
