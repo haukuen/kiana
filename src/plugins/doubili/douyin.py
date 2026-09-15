@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -35,20 +36,17 @@ ANDROID_HEADER = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 11; Redmi K30 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.72 Mobile Safari/537.36",
 }
 
-WEB_HEADER = {
+OPEN_DOUYIN_HEADER = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
-    "Referer": "https://www.douyin.com/",
+    "Origin": "https://open.douyin.com",
+    "Referer": "https://open.douyin.com/",
 }
 
-TTWID_URL = "https://ttwid.bytedance.com/ttwid/union/register/"
-TTWID_BODY = (
-    '{"region":"cn","aid":1768,"needFid":false,'
-    '"service":"www.ixigua.com","migrate_info":{"ticket":"","source":"node"},'
-    '"cbUrlProtocol":"https","union":true}'
-)
 AWEME_DETAIL_URL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+DETAIL_RETRY_DELAYS = (0.5, 1.0)
 
 # 匹配抖音链接的模式
 PATTERNS = {
@@ -58,19 +56,12 @@ PATTERNS = {
 }
 
 
-async def get_ttwid() -> str:
-    """获取抖音网页版请求所需的 ttwid cookie"""
-    async with AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-        response = await client.post(TTWID_URL, content=TTWID_BODY)
-        response.raise_for_status()
-    ttwid = response.cookies.get("ttwid")
-    if not ttwid:
-        raise ValueError("获取 ttwid 失败")
-    return ttwid
-
-
 async def fetch_aweme_detail(video_id: str) -> dict[str, Any]:
-    """通过抖音 Web API 获取作品详情
+    """通过抖音 open 通道获取作品详情
+
+    2026-09 起 PC Web 接口部署了 Argus 安全网关，对缺少真实浏览器设备
+    指纹(Uifid)的请求按概率返回 403；使用 open.douyin.com 来源的最小参数
+    请求可绕开该校验，偶发 403 再以紧凑退避重试兜底。
 
     Args:
         video_id: 作品 ID
@@ -79,46 +70,32 @@ async def fetch_aweme_detail(video_id: str) -> dict[str, Any]:
         作品的 aweme_detail 字典
 
     Raises:
-        ValueError: 请求失败或响应中缺少作品信息
+        ValueError: 重试后仍失败或响应中缺少作品信息
     """
-    params = {
-        "aweme_id": video_id,
-        "device_platform": "webapp",
-        "aid": "6383",
-        "channel": "channel_pc_web",
-        "pc_client_type": "1",
-        "version_code": "190500",
-        "version_name": "19.5.0",
-        "cookie_enabled": "true",
-        "browser_language": "zh-CN",
-        "browser_platform": "Win32",
-        "browser_name": "Chrome",
-        "browser_online": "true",
-        "engine_name": "Blink",
-        "os_name": "Windows",
-        "os_version": "10",
-        "platform": "PC",
-        "screen_width": "1920",
-        "screen_height": "1080",
-        "browser_version": "90.0.4430.212",
-        "engine_version": "90.0.4430.212",
-        "cpu_core_num": "12",
-        "device_memory": "8",
-    }
-    headers = {**WEB_HEADER, "Cookie": f"ttwid={await get_ttwid()}"}
-
+    params = {"aweme_id": video_id, "aid": "6383"}
     async with AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-        response = await client.get(AWEME_DETAIL_URL, params=params, headers=headers)
-        response.raise_for_status()
-        if not response.text:
-            raise ValueError("Web API 返回空响应")
-        data = response.json()
+        for attempt, delay in enumerate((*DETAIL_RETRY_DELAYS, None), start=1):
+            response = await client.get(AWEME_DETAIL_URL, params=params, headers=OPEN_DOUYIN_HEADER)
+            if response.status_code != 200:
+                if delay is None:
+                    raise ValueError(f"Web API 返回 {response.status_code}: {response.text[:80]}")
+                logger.debug(
+                    f"Web API 第 {attempt} 次请求被拦截({response.status_code})，{delay}s 后重试"
+                )
+                await asyncio.sleep(delay)
+                continue
 
-    if data.get("status_code") != 0:
-        raise ValueError(f"Web API 返回错误: {data.get('status_msg', '未知错误')}")
-    if not data.get("aweme_detail"):
-        raise ValueError("Web API 响应缺少 aweme_detail")
-    return data["aweme_detail"]
+            if not response.text:
+                raise ValueError("Web API 返回空响应")
+            data = response.json()
+            if data.get("status_code") != 0:
+                raise ValueError(f"Web API 返回错误: {data.get('status_msg', '未知错误')}")
+            if not data.get("aweme_detail"):
+                raise ValueError("Web API 响应缺少 aweme_detail")
+            return data["aweme_detail"]
+
+    # 重试次数耗尽仍未成功时走到这里
+    raise ValueError("Web API 请求失败，请稍后重试")
 
 
 class DouyinParser:
