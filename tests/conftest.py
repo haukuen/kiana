@@ -55,6 +55,7 @@ async def load_plugins(_nonebot_init: None):
     load_plugin("src.plugins.un_nickname")
     load_plugin("src.plugins.refine")
     load_plugin("src.plugins.word_pulse")
+    load_plugin("src.plugins.gift")
 
     from src.plugins.message_archive.db import ensure_schema
     from src.plugins.refine.db import ensure_schema as ensure_refine_schema
@@ -90,6 +91,14 @@ def reset_a_share_sentiment_state() -> None:
 
     cooldown_dict.clear()
     result_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_gift_state() -> None:
+    """每个用例前重置随机礼物插件的进程内状态。"""
+    from src.plugins.gift import reset_state
+
+    reset_state()
 
 
 @pytest_asyncio.fixture(autouse=True)
