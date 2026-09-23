@@ -14,8 +14,8 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     MessageSegment,
 )
-from nonebot.adapters.onebot.v11.exception import ActionFailed
 from nonebot.adapters.onebot.v11.event import Reply
+from nonebot.adapters.onebot.v11.exception import ActionFailed
 from nonebug import App
 
 
@@ -112,6 +112,13 @@ async def test_reply_add_nickname_keeps_replied_user_mention(app: App) -> None:
         # 拉丁/数字昵称
         ("at abc 吃饭", ["abc"]),
         ("at dev1 出事了", ["dev1"]),
+        # emoji 昵称
+        ("at✌️", ["✌️"]),
+        ("at ✌️", ["✌️"]),
+        ("at老张✌️ 吃饭", ["老张✌️"]),
+        ("at🔥小明 来了", ["🔥小明"]),
+        ("at👨‍👩‍👧‍👦", ["👨‍👩‍👧‍👦"]),
+        ("at老张，✌️", ["老张"]),
     ],
 )
 def test_at_nickname_pattern_matches(text: str, expected_names: list[str]) -> None:
@@ -136,6 +143,8 @@ def test_at_nickname_pattern_matches(text: str, expected_names: list[str]) -> No
         "at，",  # at 后直接是中文标点，没有名字
         "AT老张",  # 大小写敏感，不匹配
         "At老张",
+        "小明-酱",  # 连字符不允许
+        "a b",  # 空格不允许
     ],
 )
 def test_at_nickname_pattern_no_match(text: str) -> None:
@@ -143,6 +152,33 @@ def test_at_nickname_pattern_no_match(text: str) -> None:
     from src.plugins.un_nickname.utils import AT_NICKNAME_PATTERN
 
     assert AT_NICKNAME_PATTERN.search(text) is None, f"文本 {text!r} 不应被匹配"
+
+
+@pytest.mark.parametrize(
+    "nickname,should_pass",
+    [
+        ("老张", True),
+        ("abc123", True),
+        ("✌️", True),
+        ("老张✌️", True),
+        ("🔥小明", True),
+        ("👨‍👩‍👧‍👦", True),
+        ("❤️", True),
+        ("", False),
+        ("小明-酱", False),
+        ("a b", False),
+        ("hi@you", False),
+    ],
+)
+def test_validate_nickname_accepts_emoji(nickname: str, should_pass: bool) -> None:
+    """昵称校验应接受 emoji，仍拒绝空白和标点"""
+    from src.plugins.un_nickname.utils import validate_nickname
+
+    error = validate_nickname(nickname)
+    if should_pass:
+        assert error is None, f"{nickname!r} 应通过校验，实际: {error}"
+    else:
+        assert error is not None, f"{nickname!r} 应被拒绝"
 
 
 def test_at_nickname_pattern_consecutive_latin() -> None:

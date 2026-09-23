@@ -7,11 +7,24 @@ from .config import Config
 
 config: Config = get_plugin_config(Config)
 
+# 昵称/集合名允许的字符：汉字、字母、数字，以及 emoji。
+# emoji 含 ZWJ 与变体选择符，以支持 ✌️、👨‍👩‍👧‍👦 等组合写法。
+NAME_CHARS = (
+    r"\u4e00-\u9fa5"  # 汉字
+    r"a-zA-Z0-9"  # 字母数字
+    r"\u200d"  # ZWJ
+    r"\u2600-\u27bf"  # 杂项符号与装饰符号（含 ✌ ❤ 等）
+    r"\u2b00-\u2bff"  # 杂项符号与箭头
+    r"\ufe00-\ufe0f"  # 变体选择符
+    r"\U0001f000-\U0001faff"  # 表情符号区
+    r"\U0001fc00-\U0001fcff"  # 兼容表情符号
+)
+
 # 正则表达式常量
-VALID_NICKNAME_PATTERN = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9]+$")
-# 捕获 at 昵称：'at' 后可有一个空格，名字由汉字/字母/数字组成，
+VALID_NICKNAME_PATTERN = re.compile(rf"^[{NAME_CHARS}]+$")
+# 捕获 at 昵称：'at' 后可有一个空格，名字由上述字符组成，
 # 名字后不能再跟名字字符（避免贪婪吞掉后续中文，也兼容中文标点/句尾）。
-AT_NICKNAME_PATTERN = re.compile(r"\bat ?([\u4e00-\u9fa5a-zA-Z0-9]+)(?![\u4e00-\u9fa5a-zA-Z0-9])")
+AT_NICKNAME_PATTERN = re.compile(rf"\bat ?([{NAME_CHARS}]+)(?![{NAME_CHARS}])")
 
 # 单个合并转发节点内容的最大字符数。QQ 单条文本消息上限约 4500 字节，
 # 汉字 UTF-8 占 3 字节（约 1500 字符），取 1000 留出余量。
@@ -30,7 +43,7 @@ def validate_nickname(nickname: str) -> str | None:
     if len(nickname) > config.max_nickname_length:
         return f"昵称过长（最多{config.max_nickname_length}字符）"
     if not is_valid_nickname(nickname):
-        return "昵称只能包含汉字、字母和数字！"
+        return "昵称只能包含汉字、字母、数字和表情！"
     return None
 
 
@@ -41,7 +54,7 @@ def validate_collection_name(name: str) -> str | None:
     if len(name) > config.max_collection_name_length:
         return f"集合名过长（最多{config.max_collection_name_length}字符）"
     if not is_valid_nickname(name):
-        return "集合名只能包含汉字、字母和数字！"
+        return "集合名只能包含汉字、字母、数字和表情！"
     return None
 
 
