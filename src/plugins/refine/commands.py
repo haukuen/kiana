@@ -26,7 +26,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
-from nonebot import on_command
+from nonebot import on_command, require
 from nonebot.adapters.onebot.v11 import (
     GroupMessageEvent,
     Message,
@@ -151,14 +151,9 @@ def _format_old_result_age(created_at: int) -> str:
 async def _resolve_collection_members(
     group_id: str, collection_name: str
 ) -> list[str]:
-    """容错版本：un_nickname 未加载时返回空。"""
-    try:
-        from src.plugins.un_nickname.db import (  # noqa: PLC0415
-            fetch_collection_members,
-        )
-    except ImportError:
-        return []
-    return await fetch_collection_members(group_id, collection_name)
+    """返回集合成员列表；空列表表示集合不存在或无成员。"""
+    _un_nickname = require("src.plugins.un_nickname")
+    return await _un_nickname.fetch_collection_members(group_id, collection_name)
 
 
 async def _resolve_members_for_sub(

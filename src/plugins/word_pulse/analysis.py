@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, time, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
-from src.plugins.message_archive.db import ArchivedMessage, fetch_group_messages_by_time_range
+from nonebot import require
+
 from src.plugins.word_pulse.ai import classify_batch
 from src.plugins.word_pulse.db import delete_buckets_by_theme, get_bucket, save_bucket
 from src.storage import get_db
+
+_message_archive = require("src.plugins.message_archive")
+
+if TYPE_CHECKING:
+    from src.plugins.message_archive.db import ArchivedMessage
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 db = get_db()
@@ -148,7 +154,7 @@ async def _compute_day_bucket(
     temperature: float, timeout: float,
 ) -> dict:
     day_start = int(datetime.combine(day_dt.date(), time.min, SHANGHAI_TZ).timestamp())
-    messages = await fetch_group_messages_by_time_range(
+    messages = await _message_archive.fetch_group_messages_by_time_range(
         group_id=group_id, start_time=day_start, end_time=day_start + 86400,
     )
     if not messages:

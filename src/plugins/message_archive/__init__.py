@@ -5,7 +5,12 @@ from nonebot.plugin import PluginMetadata
 
 from ..group_permission import check_group_permission
 from .config import Config
-from .db import archive_message_event, ensure_schema
+from .db import (
+    ArchivedMessage,
+    archive_message_event,
+    ensure_schema,
+    fetch_group_messages_by_time_range,
+)
 from .image_store import purge_expired, purge_orphans
 
 __plugin_meta__ = PluginMetadata(

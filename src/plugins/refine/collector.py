@@ -10,9 +10,12 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nonebot import logger
+from nonebot import logger, require
 
 from .db import RefineSubscription, TargetType
+
+_message_archive = require("src.plugins.message_archive")
+_un_nickname = require("src.plugins.un_nickname")
 
 if TYPE_CHECKING:
     from .config import Config
@@ -30,15 +33,8 @@ class CollectedMessages:
 async def _fetch_un_nickname_collection_members(
     group_id: str, collection_name: str
 ) -> list[str]:
-    """懒加载避免循环 import。返回空列表表示集合不存在或 un_nickname 未加载。"""
-    try:
-        from src.plugins.un_nickname.db import (  # noqa: PLC0415
-            fetch_collection_members,
-        )
-    except ImportError:
-        logger.warning("[炼化] un_nickname 插件未加载，无法解析 collection 订阅")
-        return []
-    return await fetch_collection_members(group_id, collection_name)
+    """返回集合成员列表；空列表表示集合不存在或无成员。"""
+    return await _un_nickname.fetch_collection_members(group_id, collection_name)
 
 
 async def collect_messages_for_subscription(
@@ -69,11 +65,7 @@ async def collect_messages_for_subscription(
             return CollectedMessages(messages=[], period_start=start, period_end=end)
 
     try:
-        from src.plugins.message_archive.db import (  # noqa: PLC0415
-            fetch_group_messages_by_time_range,
-        )
-
-        archived = await fetch_group_messages_by_time_range(
+        archived = await _message_archive.fetch_group_messages_by_time_range(
             group_id=sub.group_id,
             start_time=start,
             end_time=end,
